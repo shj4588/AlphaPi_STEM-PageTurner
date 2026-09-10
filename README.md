@@ -2,7 +2,7 @@
 
 ## 项目说明
 
-AlphaPi Zero/AlphaPi STEM是一款面向教育和STEAM学习的多功能开发板，支持编程实践和跨学科项目操作。
+AlphaPi STEM 是国内开源ESP32微型嵌入式开发板，主打 MicroPython，面向 STEM 教学、硬件 DIY、物联网小项目
 这是 AlphaPi Zero/AlphaPi STEM蓝牙翻页器的 Arduino IDE 版本，基于 ESP32-C3 开发。支持 5 种蓝牙键位模式和 1 种 KOReader WiFi 控制模式，可通过摇晃设备翻页，支持 Web 配置和休眠省电。
 <p align="center">
   <img src="AlphaPi_PageTurner.jpg" alt="AlphaPi 蓝牙翻页器" width="400">
