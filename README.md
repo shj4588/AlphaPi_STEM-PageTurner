@@ -1,8 +1,9 @@
-# AlphaPi 蓝牙翻页器（Arduino IDE 版本）
+# AlphaPi Zero 蓝牙翻页器（Arduino IDE 版本）
 
 ## 项目说明
 
-这是 AlphaPi 蓝牙翻页器的 Arduino IDE 版本，基于 ESP32-C3 开发。支持 5 种蓝牙键位模式和 1 种 KOReader WiFi 控制模式，可通过摇晃设备翻页，支持 Web 配置和休眠省电。
+这是 AlphaPi Zero蓝牙翻页器的 Arduino IDE 版本，基于 ESP32-C3 开发。支持 5 种蓝牙键位模式和 1 种 KOReader WiFi 控制模式，可通过摇晃设备翻页，支持 Web 配置和休眠省电。
+![Uploading IMG_20260910_220529.jpg…]()
 
 ## 功能特性
 
