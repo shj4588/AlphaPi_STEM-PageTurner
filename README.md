@@ -232,6 +232,4 @@ checksum = (0x90 + addr + len(data) + sum(data)) & 0xFF
 
 ## 参考资料
 
-- 原厂 MicroPython 版本程序：`original_firmware/` 目录
-- 用户提供的参考固件：`test.cpp`
 - KOReader HTTP Inspector API：http://<KOReader IP>:<端口>/koreader/event/
