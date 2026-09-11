@@ -1,3 +1,7 @@
+#include <BLEHIDKeys.h>
+#include <BLEHIDMediaKeys.h>
+#include <HijelHID_BLEKeyboard.h>
+
 /*
  * SC7A20.cpp - SC7A20 加速度计驱动与摇晃检测实现
  * 

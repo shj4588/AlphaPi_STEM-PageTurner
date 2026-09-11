@@ -433,36 +433,21 @@ String WebConfig::generateConfigPage() {
     html += "<input type=\"submit\" value=\"保存配置并重启\">\n";
     html += "</form>\n";
     
-    // 操作说明
-    html += "<div class=\"note\">\n";
-    html += "<h3>操作说明</h3>\n";
+    // 功能介绍（移到底部）
+    html += "<div class=\"item\">\n";
+    html += "<h3>功能介绍</h3>\n";
+    html += "<p><b>5 种蓝牙键位模式：</b>page（PageUp/Down）、arrow（方向键）、media（音量加减）、music（上下曲）、play（播放暂停/停止）</p>\n";
+    html += "<p><b>KOReader 模式：</b>通过 WiFi HTTP 请求控制 KOReader 电子书阅读器，同时长按 A+B 切换</p>\n";
+    html += "<p><b>按键功能：</b></p>\n";
     html += "<table>\n";
     html += "<tr><th>按键</th><th>短按</th><th>长按</th></tr>\n";
-    html += "<tr><td>A 键</td><td>切换翻页箭头显示开关</td><td>切换键位模式</td></tr>\n";
-    html += "<tr><td>B 键</td><td>下一页/下一曲/音量+</td><td>开关摇晃翻页功能</td></tr>\n";
-    html += "<tr><td>C 键</td><td>上一页/上一曲/音量-</td><td>对调翻页方向（play模式下不生效）</td></tr>\n";
+    html += "<tr><td>A</td><td>切换翻页箭头显示</td><td>切换模式 / koreader模式重启AP</td></tr>\n";
+    html += "<tr><td>B</td><td>下一页/下一曲/音量+</td><td>开关摇晃翻页</td></tr>\n";
+    html += "<tr><td>C</td><td>上一页/上一曲/音量-</td><td>对调翻页方向（play模式不生效）</td></tr>\n";
+    html += "<tr><td>A+B</td><td>-</td><td>切换到/离开 koreader 模式</td></tr>\n";
     html += "</table>\n";
-    html += "<br>\n";
-    html += "<h4>6 种键位模式</h4>\n";
-    html += "<ol>\n";
-    html += "<li><b>page</b> - PageUp / PageDown（PowerPoint、乐谱 App 通用）</li>\n";
-    html += "<li><b>arrow</b> - Left / Right（ForScore 等方向键翻页 App）</li>\n";
-    html += "<li><b>media</b> - 音量+ / 音量-（阅读类 App 无翻页键时用音量键触发）</li>\n";
-    html += "<li><b>music</b> - 上一曲 / 下一曲（音乐播放器切歌）</li>\n";
-    html += "<li><b>play</b> - 播放暂停 / 停止（音乐播放器播放控制）</li>\n";
-    html += "<li><b>koreader</b> - 通过 HTTP 请求控制 KOReader（需要连接 WiFi，可自定义指令）</li>\n";
-    html += "</ol>\n";
-    html += "<br>\n";
-    html += "<h4>摇晃翻页功能</h4>\n";
-    html += "<ul>\n";
-    html += "<li>默认开启，长按 B 键可开关摇晃翻页功能</li>\n";
-    html += "<li>摇晃设备即可翻页，和当前按键模式同步切换</li>\n";
-    html += "<li><b>play 模式下摇晃只触发播放暂停</b>，不触发停止</li>\n";
-    html += "<li>摇晃检测：检测到晃动幅度连续多帧超限 → 等待静止，静止达标才触发</li>\n";
-    html += "</ul>\n";
-    html += "<br>\n";
-    html += "<p>连接热点 AlphaPi-Config，访问 192.168.4.1 配置</p>\n";
-    html += "<p>保存配置后设备会自动重启</p>\n";
+    html += "<p><b>休眠功能：</b>可配置无操作超时进入休眠（最低30秒），单击任意按键唤醒，AP有设备连接时不进入休眠</p>\n";
+    html += "<p><b>屏幕显示：</b>5x5 LED 点阵显示各模式图标和操作状态，翻页箭头显示500ms，其他图标显示2秒后自动熄灭</p>\n";
     html += "</div>\n";
     
     html += "</body></html>\n";

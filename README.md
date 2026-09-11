@@ -3,7 +3,7 @@
 ## 项目说明
 
 AlphaPi STEM 是国内开源ESP32微型嵌入式开发板，主打 MicroPython，面向 STEM 教学、硬件 DIY、物联网小项目
-这是AlphaPi STEM 蓝牙翻页器的 Arduino IDE 版本，基于 ESP32-C3 开发。支持 5 种蓝牙键位模式和 1 种 KOReader WiFi 控制模式，可通过摇晃设备翻页，支持 Web 配置和休眠省电。
+这是 AlphaPi Zero/AlphaPi STEM蓝牙翻页器的 Arduino IDE 版本，基于 ESP32-C3 开发。支持 5 种蓝牙键位模式和 1 种 KOReader WiFi 控制模式，可通过摇晃设备翻页，支持 Web 配置和休眠省电。
 <p align="center">
   <img src="AlphaPi_PageTurner.jpg" alt="AlphaPi 蓝牙翻页器" width="400">
 </p>
@@ -40,7 +40,7 @@ AlphaPi STEM 是国内开源ESP32微型嵌入式开发板，主打 MicroPython�
 
 | 按键 | 短按 | 长按 |
 |------|------|------|
-| A 键 | 切换翻页箭头显示开关 | 切换键位模式（蓝牙模式间循环） |
+| A 键 | 切换翻页箭头显示开关 | 切换键位模式（蓝牙模式间循环）；koreader 模式下 AP 已关闭时重新打开 AP |
 | B 键 | 下一页/下一曲/音量+（受方向对调影响） | 开关摇晃翻页功能 |
 | C 键 | 上一页/上一曲/音量-（受方向对调影响） | 对调翻页方向（play 模式下不生效） |
 | A+B 同时长按 | - | 切换到/离开 koreader 模式 |
@@ -67,7 +67,7 @@ AlphaPi STEM 是国内开源ESP32微型嵌入式开发板，主打 MicroPython�
 - 长按 A 键显示 koreader 图标（字母 K）
 - 同时长按 A+B 返回到之前的蓝牙模式
 - AP 热点名称："AlphaPi-Config"，访问地址：192.168.4.1
-- AP 热点 1 分钟无设备连接自动关闭，短按 A 键可重新打开
+- AP 热点 1 分钟无设备连接自动关闭，长按 A 键可重新打开
 
 ## 摇晃检测
 
@@ -90,6 +90,8 @@ AlphaPi STEM 是国内开源ESP32微型嵌入式开发板，主打 MicroPython�
 - 摇晃关闭：叉号图标
 - 方向对调：圆圈图标
 - BLE 未连接时摇晃：显示等待图标（菱形）
+- 翻页箭头/音量/播放图标：显示 500ms 后自动熄灭
+- 模式切换/功能开关图标：显示 2 秒后自动熄灭
 
 ## 休眠功能
 
@@ -179,7 +181,7 @@ AlphaPi_PageTurner/
    https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
    ```
 4. 工具 → 开发板 → 开发板管理器
-5. 搜索 "esp32"，安装 "esp32 by Espressif Systems"
+5. 搜索 "esp32"，安装 "esp32 by Espressif Systems"，**版本选择 2.0.14**
 
 ### 3. 安装依赖库
 - HijelHID_BLEKeyboard（BLE HID 键盘库，T-vK 的库有 bug 不要用）
@@ -188,10 +190,21 @@ AlphaPi_PageTurner/
 - 工具 → 开发板 → ESP32 Arduino → ESP32C3 Dev Module
 
 ### 5. 配置参数
-- 工具 → 端口 → 选择对应的串口号（如 COM3）
-- 工具 → Upload Speed → 115200（注意：必须设为 115200，否则上传失败）
-- 工具 → Flash Size → 4MB (32Mb)
-- 工具 → Partition Scheme → Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS)
+按以下参数配置（工具菜单中）：
+
+| 参数 | 值 |
+|------|-----|
+| 端口 | 选择对应的串口号（如 COM3） |
+| Upload Speed | **115200**（必须，否则上传失败） |
+| USB CDC On Boot | Enabled |
+| CPU Frequency | 160MHz (WiFi) |
+| Core Debug Level | None |
+| Erase All Flash Before Sketch Upload | Disabled |
+| Flash Frequency | 80MHz |
+| Flash Mode | QIO |
+| Flash Size | 4MB (32Mb) |
+| JTAG Adapter | Integrated USB JTAG |
+| Partition Scheme | Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS) |
 
 ### 6. 编译上传
 1. 打开 `AlphaPi_PageTurner.ino`

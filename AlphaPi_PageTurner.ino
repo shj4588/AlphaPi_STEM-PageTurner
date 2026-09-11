@@ -703,26 +703,26 @@ void loop() {
             }
         }
         
-        // 短按A：切换翻页箭头显示开关（koreader模式下如果AP已关闭则重新打开AP）
+        // 短按A：切换翻页箭头显示开关
         if (buttons.A.pressed() && !abSuppressSingle) {
             updateActivity();
-            if (config->currentMode == MODE_KOREADER && !wifiAPEnabled) {
-                // koreader 模式下 AP 已关闭，重新打开 AP
-                enableWiFi();
-                showIconWithTimeout("koreader", 2000);
-            } else {
-                config->pageDisplayEnable = !config->pageDisplayEnable;
-                webConfig.saveConfig();
-                showIconWithTimeout(config->pageDisplayEnable ? "arrow_on" : "arrow_off", 2000);
-            }
+            config->pageDisplayEnable = !config->pageDisplayEnable;
+            webConfig.saveConfig();
+            showIconWithTimeout(config->pageDisplayEnable ? "arrow_on" : "arrow_off", 2000);
         }
         
-        // 长按A：切换模式（只在 5 种非 koreader 模式之间循环，且 A+B 同时长按时不触发，跳过关闭的模式）
+        // 长按A：切换模式（koreader模式下如果AP已关闭则重新打开AP）
         if (buttons.A.longPressed() && !abSuppressSingle) {
             updateActivity();
             if (config->currentMode == MODE_KOREADER) {
-                // koreader 模式下长按 A 键：显示 koreader 图标
-                showIconWithTimeout("koreader", 2000);
+                if (!wifiAPEnabled) {
+                    // koreader 模式下 AP 已关闭，长按 A 重新打开 AP
+                    enableWiFi();
+                    showIconWithTimeout("koreader", 2000);
+                } else {
+                    // AP 已开启，显示 koreader 图标
+                    showIconWithTimeout("koreader", 2000);
+                }
             } else {
                 // 其他模式：切换模式
                 config->currentMode = getNextEnabledMode(config->currentMode);
@@ -766,7 +766,7 @@ void loop() {
                 } else {
                     icon = isNext ? "arrow_right" : "arrow_left";
                 }
-                showIconWithTimeout(icon, 1000);
+                showIconWithTimeout(icon, 500);
             }
         }
         
@@ -811,7 +811,7 @@ void loop() {
                 } else {
                     icon = isNext ? "arrow_right" : "arrow_left";
                 }
-                showIconWithTimeout(icon, 1000);
+                showIconWithTimeout(icon, 500);
             }
         }
         
@@ -900,7 +900,7 @@ void loop() {
                     // page、arrow、music 模式显示箭头
                     icon = isNext ? "arrow_right" : "arrow_left";
                 }
-                showIconWithTimeout(icon, 1000);
+                showIconWithTimeout(icon, 500);
             }
         }
         
