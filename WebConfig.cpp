@@ -1,13 +1,15 @@
 /*
  * WebConfig.cpp - Web 配置功能实现
- * 
- * 参考 test.cpp 的实现
  */
 
 #include "WebConfig.h"
 #include "BleHid.h"
 
 extern BleHid bleHid;
+
+// KOReader AP 模式常量
+const char* WebConfig::KO_AP_SSID = "AlphaPi-Config";
+const char* WebConfig::KO_AP_IP = "192.168.4.2";
 
 // 动作名称列表
 const char* actionNames[] = {
@@ -32,6 +34,7 @@ const char* actionNames[] = {
 
 WebConfig::WebConfig() {
     _server = nullptr;
+    _koAPMode = false;
 }
 
 void WebConfig::setDefaultConfig() {
@@ -103,11 +106,22 @@ void WebConfig::setDefaultConfig() {
     _config.modeMusicEnable = true;
     _config.modePlayEnable = true;
     
+    // 游戏启用状态（默认全部启用）
+    _config.gameSnakeEnable = true;
+    _config.gameCatchEnable = true;
+    _config.gameDiceEnable = true;
+    _config.gameStopwatchEnable = true;
+    _config.gameGomokuEnable = true;
+    _config.gameFlappyEnable = true;
+    _config.gameRacingEnable = true;
+    _config.gameTetrisEnable = true;
+    
     // KOReader 默认配置
     strcpy(_config.koreaderIP, "192.168.2.107");
     _config.koreaderPort = 8080;
     strcpy(_config.koreaderNextCmd, "GotoViewRel/1");
     strcpy(_config.koreaderPrevCmd, "GotoViewRel/-1");
+    _config.koApPort = 8080;  // AP模式下默认端口8080
     
     // WiFi STA 默认配置
     strcpy(_staSSID, "");
@@ -157,12 +171,23 @@ void WebConfig::loadConfig() {
     _config.modeMusicEnable = _prefs.getBool("mode_music", true);
     _config.modePlayEnable = _prefs.getBool("mode_play", true);
     
+    // 游戏启用状态
+    _config.gameSnakeEnable = _prefs.getBool("game_snake", true);
+    _config.gameCatchEnable = _prefs.getBool("game_catch", true);
+    _config.gameDiceEnable = _prefs.getBool("game_dice", true);
+    _config.gameStopwatchEnable = _prefs.getBool("game_stopwatch", true);
+    _config.gameGomokuEnable = _prefs.getBool("game_gomoku", true);
+    _config.gameFlappyEnable = _prefs.getBool("game_flappy", true);
+    _config.gameRacingEnable = _prefs.getBool("game_racing", true);
+    _config.gameTetrisEnable = _prefs.getBool("game_tetris", true);
+    
     // KOReader 配置
     String koIP = _prefs.getString("ko_ip", "");
     if (koIP.length() > 0) {
         strncpy(_config.koreaderIP, koIP.c_str(), sizeof(_config.koreaderIP) - 1);
     }
     _config.koreaderPort = _prefs.getUShort("ko_port", 8080);
+    _config.koApPort = _prefs.getUShort("ko_ap_port", 8080);
     String koNext = _prefs.getString("ko_next", "");
     if (koNext.length() > 0) {
         strncpy(_config.koreaderNextCmd, koNext.c_str(), sizeof(_config.koreaderNextCmd) - 1);
@@ -225,9 +250,20 @@ void WebConfig::saveConfig() {
     _prefs.putBool("mode_music", _config.modeMusicEnable);
     _prefs.putBool("mode_play", _config.modePlayEnable);
     
+    // 游戏启用状态
+    _prefs.putBool("game_snake", _config.gameSnakeEnable);
+    _prefs.putBool("game_catch", _config.gameCatchEnable);
+    _prefs.putBool("game_dice", _config.gameDiceEnable);
+    _prefs.putBool("game_stopwatch", _config.gameStopwatchEnable);
+    _prefs.putBool("game_gomoku", _config.gameGomokuEnable);
+    _prefs.putBool("game_flappy", _config.gameFlappyEnable);
+    _prefs.putBool("game_racing", _config.gameRacingEnable);
+    _prefs.putBool("game_tetris", _config.gameTetrisEnable);
+    
     // KOReader 配置
     _prefs.putString("ko_ip", _config.koreaderIP);
     _prefs.putUShort("ko_port", _config.koreaderPort);
+    _prefs.putUShort("ko_ap_port", _config.koApPort);
     _prefs.putString("ko_next", _config.koreaderNextCmd);
     _prefs.putString("ko_prev", _config.koreaderPrevCmd);
     
@@ -400,6 +436,43 @@ String WebConfig::generateConfigPage() {
     html += "</select><br>\n";
     html += "</div>\n";
     
+    // 游戏启用设置
+    html += "<div class=\"item\">\n";
+    html += "<h3>游戏启用设置（关闭后长按A切换游戏时跳过）</h3>\n";
+    html += "贪吃蛇:<select name=\"game_snake\">\n";
+    html += "<option value=\"1\"" + String(_config.gameSnakeEnable ? " selected" : "") + ">启用</option>\n";
+    html += "<option value=\"0\"" + String(!_config.gameSnakeEnable ? " selected" : "") + ">关闭</option>\n";
+    html += "</select><br>\n";
+    html += "接球:<select name=\"game_catch\">\n";
+    html += "<option value=\"1\"" + String(_config.gameCatchEnable ? " selected" : "") + ">启用</option>\n";
+    html += "<option value=\"0\"" + String(!_config.gameCatchEnable ? " selected" : "") + ">关闭</option>\n";
+    html += "</select><br>\n";
+    html += "摇色子:<select name=\"game_dice\">\n";
+    html += "<option value=\"1\"" + String(_config.gameDiceEnable ? " selected" : "") + ">启用</option>\n";
+    html += "<option value=\"0\"" + String(!_config.gameDiceEnable ? " selected" : "") + ">关闭</option>\n";
+    html += "</select><br>\n";
+    html += "秒表:<select name=\"game_stopwatch\">\n";
+    html += "<option value=\"1\"" + String(_config.gameStopwatchEnable ? " selected" : "") + ">启用</option>\n";
+    html += "<option value=\"0\"" + String(!_config.gameStopwatchEnable ? " selected" : "") + ">关闭</option>\n";
+    html += "</select><br>\n";
+    html += "井字棋:<select name=\"game_gomoku\">\n";
+    html += "<option value=\"1\"" + String(_config.gameGomokuEnable ? " selected" : "") + ">启用</option>\n";
+    html += "<option value=\"0\"" + String(!_config.gameGomokuEnable ? " selected" : "") + ">关闭</option>\n";
+    html += "</select><br>\n";
+    html += "像素鸟:<select name=\"game_flappy\">\n";
+    html += "<option value=\"1\"" + String(_config.gameFlappyEnable ? " selected" : "") + ">启用</option>\n";
+    html += "<option value=\"0\"" + String(!_config.gameFlappyEnable ? " selected" : "") + ">关闭</option>\n";
+    html += "</select><br>\n";
+    html += "赛车避障:<select name=\"game_racing\">\n";
+    html += "<option value=\"1\"" + String(_config.gameRacingEnable ? " selected" : "") + ">启用</option>\n";
+    html += "<option value=\"0\"" + String(!_config.gameRacingEnable ? " selected" : "") + ">关闭</option>\n";
+    html += "</select><br>\n";
+    html += "俄罗斯方块:<select name=\"game_tetris\">\n";
+    html += "<option value=\"1\"" + String(_config.gameTetrisEnable ? " selected" : "") + ">启用</option>\n";
+    html += "<option value=\"0\"" + String(!_config.gameTetrisEnable ? " selected" : "") + ">关闭</option>\n";
+    html += "</select><br>\n";
+    html += "</div>\n";
+    
     // WiFi STA 设置（用于 KOReader 模式）
     html += "<div class=\"item\">\n";
     html += "<h3>WiFi STA 设置（用于 KOReader 模式）</h3>\n";
@@ -412,7 +485,9 @@ String WebConfig::generateConfigPage() {
     html += "<div class=\"item\">\n";
     html += "<h3>KOReader 设置</h3>\n";
     html += "KOReader IP:<input name=\"ko_ip\" value=\"" + String(_config.koreaderIP) + "\"><br>\n";
-    html += "KOReader 端口:<input name=\"ko_port\" value=\"" + String(_config.koreaderPort) + "\"><br>\n";
+    html += "KOReader 端口(STA模式):<input name=\"ko_port\" value=\"" + String(_config.koreaderPort) + "\"><br>\n";
+    html += "KOReader 端口(AP模式):<input name=\"ko_ap_port\" value=\"" + String(_config.koApPort) + "\"><br>\n";
+    html += "<p style=\"color:#666;font-size:12px;\">AP模式下IP固定为192.168.4.2，端口可单独设置</p>\n";
     html += "下一页 HTTP 指令:<input name=\"ko_next\" value=\"" + String(_config.koreaderNextCmd) + "\"><br>\n";
     html += "上一页 HTTP 指令:<input name=\"ko_prev\" value=\"" + String(_config.koreaderPrevCmd) + "\"><br>\n";
     html += "<p>默认: 下一页=GotoViewRel/1, 上一页=GotoViewRel/-1</p>\n";
@@ -420,7 +495,8 @@ String WebConfig::generateConfigPage() {
     html += "<div style=\"background:#f0f7ff;padding:10px;border-radius:4px;margin-top:10px;\">\n";
     html += "<p><b>📋 查看所有 KOReader 指令的方法：</b></p>\n";
     html += "<ol style=\"margin:5px 0;padding-left:20px;\">\n";
-    html += "<li>确保手机和 KOReader 设备连接到<b>同一个 WiFi 网络</b></li>\n";
+    html += "<li><b>STA模式</b>：确保手机和 KOReader 设备连接到同一个 WiFi 网络</li>\n";
+    html += "<li><b>AP模式</b>：手机连接翻页器热点\"AlphaPi-Config\"，自动获取IP 192.168.4.2</li>\n";
     html += "<li>在 KOReader 中启动 HTTP Inspector（工具 -> 更多工具 -> KOReader HTTP Inspector）</li>\n";
     html += "<li>在手机浏览器中访问：<code>http://" + String(_config.koreaderIP) + ":" + String(_config.koreaderPort) + "/koreader/event/</code></li>\n";
     html += "</ol>\n";
@@ -437,17 +513,23 @@ String WebConfig::generateConfigPage() {
     html += "<div class=\"item\">\n";
     html += "<h3>功能介绍</h3>\n";
     html += "<p><b>5 种蓝牙键位模式：</b>page（PageUp/Down）、arrow（方向键）、media（音量加减）、music（上下曲）、play（播放暂停/停止）</p>\n";
-    html += "<p><b>KOReader 模式：</b>通过 WiFi HTTP 请求控制 KOReader 电子书阅读器，同时长按 A+B 切换</p>\n";
+    html += "<p><b>KOReader 模式：</b>通过 WiFi HTTP 请求控制 KOReader 电子书阅读器，同时长按 A+B 切换。支持STA/AP双模式，长按A一键切换：</p>\n";
+    html += "<ul>\n";
+    html += "<li><b>STA模式</b>：连接路由器，手机和翻页器在同一局域网</li>\n";
+    html += "<li><b>AP模式</b>：手机直连翻页器热点\"AlphaPi-Config\"，IP固定192.168.4.2，不需要路由器</li>\n";
+    html += "</ul>\n";
+    html += "<p><b>8 种内置小游戏：</b>贪吃蛇、接球、摇色子、秒表、井字棋、像素鸟、赛车避障、俄罗斯方块。同时长按 B+C 进入/退出游戏模式，长按A切换游戏，长按B重新开始。</p>\n";
     html += "<p><b>按键功能：</b></p>\n";
     html += "<table>\n";
     html += "<tr><th>按键</th><th>短按</th><th>长按</th></tr>\n";
-    html += "<tr><td>A</td><td>切换翻页箭头显示</td><td>切换模式 / koreader模式重启AP</td></tr>\n";
+    html += "<tr><td>A</td><td>切换翻页箭头显示</td><td>切换模式 / KOReader模式切换STA/AP</td></tr>\n";
     html += "<tr><td>B</td><td>下一页/下一曲/音量+</td><td>开关摇晃翻页</td></tr>\n";
     html += "<tr><td>C</td><td>上一页/上一曲/音量-</td><td>对调翻页方向（play模式不生效）</td></tr>\n";
-    html += "<tr><td>A+B</td><td>-</td><td>切换到/离开 koreader 模式</td></tr>\n";
+    html += "<tr><td>A+B</td><td>-</td><td>切换到/离开 KOReader 模式</td></tr>\n";
+    html += "<tr><td>B+C</td><td>-</td><td>进入/退出游戏模式</td></tr>\n";
     html += "</table>\n";
-    html += "<p><b>休眠功能：</b>可配置无操作超时进入休眠（最低30秒），单击任意按键唤醒，AP有设备连接时不进入休眠</p>\n";
-    html += "<p><b>屏幕显示：</b>5x5 LED 点阵显示各模式图标和操作状态，翻页箭头显示500ms，其他图标显示2秒后自动熄灭</p>\n";
+    html += "<p><b>休眠功能：</b>可配置无操作超时进入休眠（最低30秒），单击任意按键唤醒，AP有设备连接时不进入休眠，游戏模式也遵守休眠逻辑</p>\n";
+    html += "<p><b>屏幕显示：</b>5x5 LED 点阵显示各模式图标和操作状态，翻页箭头显示500ms，其他图标显示2秒后自动熄灭。KOReader模式STA显示大K，AP显示小K</p>\n";
     html += "</div>\n";
     
     html += "</body></html>\n";
@@ -495,6 +577,16 @@ void WebConfig::handleSave() {
     _config.modeMusicEnable = _server->arg("mode_music").toInt() == 1;
     _config.modePlayEnable = _server->arg("mode_play").toInt() == 1;
     
+    // 游戏启用状态
+    _config.gameSnakeEnable = _server->arg("game_snake").toInt() == 1;
+    _config.gameCatchEnable = _server->arg("game_catch").toInt() == 1;
+    _config.gameDiceEnable = _server->arg("game_dice").toInt() == 1;
+    _config.gameStopwatchEnable = _server->arg("game_stopwatch").toInt() == 1;
+    _config.gameGomokuEnable = _server->arg("game_gomoku").toInt() == 1;
+    _config.gameFlappyEnable = _server->arg("game_flappy").toInt() == 1;
+    _config.gameRacingEnable = _server->arg("game_racing").toInt() == 1;
+    _config.gameTetrisEnable = _server->arg("game_tetris").toInt() == 1;
+    
     // WiFi STA 配置
     String newSSID = _server->arg("sta_ssid");
     if (newSSID.length() > 0) {
@@ -512,6 +604,8 @@ void WebConfig::handleSave() {
     }
     _config.koreaderPort = _server->arg("ko_port").toInt();
     if (_config.koreaderPort == 0) _config.koreaderPort = 8080;
+    _config.koApPort = _server->arg("ko_ap_port").toInt();
+    if (_config.koApPort == 0) _config.koApPort = 8080;
     String newKONext = _server->arg("ko_next");
     if (newKONext.length() > 0) {
         strncpy(_config.koreaderNextCmd, newKONext.c_str(), sizeof(_config.koreaderNextCmd) - 1);
@@ -590,7 +684,66 @@ bool WebConfig::isSTAConnected() {
     return WiFi.status() == WL_CONNECTED;
 }
 
+void WebConfig::setKOModeAP(bool apMode) {
+    if (_koAPMode == apMode) return;
+    _koAPMode = apMode;
+    
+    // AP模式只是改变HTTP命令的目标IP，不需要重新配置WiFi
+    // WiFi一直保持AP+STA模式，热点"AlphaPi-Config"始终存在
+    if (apMode) {
+        Serial.println("KO mode: AP mode (target IP = 192.168.4.2)");
+    } else {
+        Serial.println("KO mode: STA mode (target IP = configured IP)");
+    }
+}
+
+bool WebConfig::isKOModeAP() {
+    return _koAPMode;
+}
+
 bool WebConfig::sendKoreaderRequest(const char* path) {
+    // AP模式下：直接向固定IP发送，不需要检查STA连接
+    if (_koAPMode) {
+        WiFiClient client;
+        String urlPath = "/koreader/event/" + String(path);
+        IPAddress targetIP;
+        targetIP.fromString(KO_AP_IP);
+        
+        Serial.print("KO AP mode HTTP GET: ");
+        Serial.print(KO_AP_IP);
+        Serial.print(":");
+        Serial.print(_config.koApPort);
+        Serial.println(urlPath);
+        
+        if (!client.connect(targetIP, _config.koApPort)) {
+            Serial.println("KO AP mode: connect FAIL");
+            client.stop();
+            return false;
+        }
+        
+        String httpReq = "GET " + urlPath + " HTTP/1.1\r\n";
+        httpReq += "Host: " + String(KO_AP_IP) + "\r\n";
+        httpReq += "Connection: close\r\n";
+        httpReq += "\r\n";
+        client.print(httpReq);
+        
+        // 等待响应（最多 400ms）
+        unsigned long t = millis();
+        while (client.available() == 0 && millis() - t < 400) {
+            delay(1);
+        }
+        
+        if (client.available()) {
+            String statusLine = client.readStringUntil('\r');
+            Serial.print("KO AP response: ");
+            Serial.println(statusLine);
+        }
+        
+        client.stop();
+        return true;
+    }
+    
+    // STA模式下：需要检查WiFi连接
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("KOReader: WiFi not connected");
         return false;

@@ -117,6 +117,15 @@ const uint8_t ICON_KOREADER[25] = {
     1,0,0,0,1
 };
 
+// KO AP模式图标：小一点的K（横向4像素，纵向5像素）
+const uint8_t ICON_KO_AP[25] = {
+    0,1,0,0,1,
+    0,1,0,1,0,
+    0,1,1,0,0,
+    0,1,0,1,0,
+    0,1,0,0,1
+};
+
 const uint8_t ICON_VOLUME_UP[25] = {
     0,0,0,0,0,
     0,0,1,0,0,
@@ -298,6 +307,7 @@ void MatrixDisplay::showIcon(const char* iconName) {
     else if (strcmp(iconName, "arrow_on") == 0) showPattern(ICON_ARROW_ON);
     else if (strcmp(iconName, "arrow_off") == 0) showPattern(ICON_ARROW_OFF);
     else if (strcmp(iconName, "koreader") == 0) showPattern(ICON_KOREADER);
+    else if (strcmp(iconName, "ko_ap") == 0) showPattern(ICON_KO_AP);
     else if (strcmp(iconName, "volume_up") == 0) showPattern(ICON_VOLUME_UP);
     else if (strcmp(iconName, "volume_down") == 0) showPattern(ICON_VOLUME_DOWN);
     else if (strcmp(iconName, "shake_on") == 0) showPattern(ICON_SHAKE_ON);

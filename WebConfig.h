@@ -5,8 +5,6 @@
  * - WiFi AP 模式（热点）
  * - Web 服务器（配置页面）
  * - 参数配置和保存
- * 
- * 参考 test.cpp 的实现
  */
 
 #ifndef WEBCONFIG_H
@@ -77,11 +75,22 @@ struct DeviceConfig {
     bool modeMusicEnable;   // music 模式
     bool modePlayEnable;    // play 模式
     
+    // 游戏启用状态（true=启用，false=关闭，切换时跳过）
+    bool gameSnakeEnable;       // 贪吃蛇
+    bool gameCatchEnable;       // 接球
+    bool gameDiceEnable;        // 摇色子
+    bool gameStopwatchEnable;   // 秒表
+    bool gameGomokuEnable;      // 井字棋
+    bool gameFlappyEnable;      // 像素鸟
+    bool gameRacingEnable;      // 赛车避障
+    bool gameTetrisEnable;      // 俄罗斯方块（2x2简化版）
+    
     // KOReader 配置
     char koreaderIP[16];
     uint16_t koreaderPort;
     char koreaderNextCmd[64];  // 下一页 HTTP 指令
     char koreaderPrevCmd[64];  // 上一页 HTTP 指令
+    uint16_t koApPort;  // AP模式下的KOReader端口（默认8080）
 };
 
 class WebConfig {
@@ -130,6 +139,12 @@ public:
     // 检查 WiFi STA 是否连接
     bool isSTAConnected();
     
+    // KOReader AP 模式（手机直接连接翻页器热点）
+    void setKOModeAP(bool apMode);
+    bool isKOModeAP();
+    static const char* KO_AP_SSID;
+    static const char* KO_AP_IP;  // 手机连接后的IP
+    
 private:
     WebServer* _server;
     Preferences _prefs;
@@ -138,6 +153,9 @@ private:
     // WiFi 设置
     char _staSSID[32];
     char _staPassword[64];
+    
+    // KOReader AP 模式
+    bool _koAPMode;
     
     // 生成配置页面 HTML
     String generateConfigPage();

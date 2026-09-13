@@ -18,6 +18,14 @@
 #include "Buttons.h"
 #include "BleHid.h"
 #include "WebConfig.h"
+#include "SnakeGame.h"
+#include "CatchGame.h"
+#include "DiceGame.h"
+#include "StopwatchGame.h"
+#include "GomokuGame.h"
+#include "FlappyGame.h"
+#include "RacingGame.h"
+#include "TetrisGame.h"
 
 // 点阵显示
 MatrixDisplay display;
@@ -33,6 +41,40 @@ BleHid bleHid;
 
 // Web 配置
 WebConfig webConfig;
+
+// 贪吃蛇游戏
+SnakeGame snakeGame(display);
+
+// 俄罗斯方块游戏
+TetrisGame tetrisGame(display);
+
+// 接球游戏
+CatchGame catchGame(display);
+
+// 摇色子游戏
+DiceGame diceGame(display, accel);
+
+// 秒表游戏
+StopwatchGame stopwatchGame(display);
+
+// 井字棋游戏
+GomokuGame gomokuGame(display);
+
+// 像素鸟游戏
+FlappyGame flappyGame(display);
+
+// 赛车避障游戏
+RacingGame racingGame(display);
+
+// 游戏模式
+bool gameMode = false;
+uint8_t currentGame = 0;  // 0=贪吃蛇, 1=接球, 2=摇色子, 3=秒表, 4=井字棋, 5=像素鸟, 6=赛车避障, 7=俄罗斯方块
+
+// 同时长按 B+C 检测
+bool bcBothDown = false;
+uint32_t bcBothDownStartTime = 0;
+bool bcLongPressTriggered = false;
+bool bcSuppressSingle = false;  // 抑制 B/C 单键事件
 
 // 测试模式：
 // 0 = 点阵测试（循环显示所有图标）
@@ -99,6 +141,7 @@ bool abSuppressSingle = false;  // 抑制 A/B 单键事件
 // 休眠管理
 uint32_t lastActivityTime = 0;
 bool isSleeping = false;
+bool wasInGameModeBeforeSleep = false;  // 记录休眠前是否在游戏模式
 
 // 更新活动时间（有操作时调用）
 void updateActivity() {
@@ -118,6 +161,9 @@ void enterSleep() {
     }
     
     isSleeping = true;
+    
+    // 记录休眠前是否在游戏模式
+    wasInGameModeBeforeSleep = gameMode;
     
     // 关闭屏幕
     display.showIcon("clear");
@@ -157,6 +203,9 @@ void enterSleep() {
     abBothDown = false;
     abLongPressTriggered = false;
     abSuppressSingle = false;
+    bcBothDown = false;
+    bcLongPressTriggered = false;
+    bcSuppressSingle = false;
     
     DeviceConfig* config = webConfig.getConfig();
     
@@ -187,9 +236,50 @@ void enterSleep() {
         delay(10);
     }
     
-    // 显示当前模式图标 2 秒
-    const char* modeIcons[] = {"page", "arrow", "media", "music", "play", "koreader"};
-    showIconWithTimeout(modeIcons[config->currentMode], 2000);
+    // 如果休眠前在游戏模式，唤醒后重新进入游戏模式
+    if (wasInGameModeBeforeSleep) {
+        gameMode = true;
+        disableBLE();
+        disableWiFi();
+        screenOffDeadline = 0;  // 屏幕常亮
+        
+        // 检查当前游戏是否被关闭，如果是则切换到第一个启用的游戏
+        bool gameEnabled[8] = {
+            config->gameSnakeEnable, config->gameCatchEnable, config->gameDiceEnable,
+            config->gameStopwatchEnable, config->gameGomokuEnable, config->gameFlappyEnable,
+            config->gameRacingEnable, config->gameTetrisEnable
+        };
+        if (!gameEnabled[currentGame]) {
+            bool found = false;
+            for (int i = 0; i < 8; i++) {
+                if (gameEnabled[i]) {
+                    currentGame = i;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                currentGame = 0;
+            }
+        }
+        
+        // 初始化当前游戏
+        switch (currentGame) {
+            case 0: snakeGame.begin(); break;
+            case 1: catchGame.begin(); break;
+            case 2: diceGame.begin(); break;
+            case 3: stopwatchGame.begin(); break;
+            case 4: gomokuGame.begin(); break;
+            case 5: flappyGame.begin(); break;
+            case 6: racingGame.begin(); break;
+            case 7: tetrisGame.begin(); break;
+        }
+        
+        Serial.println("Woke up in game mode");
+    } else {
+        // 显示当前模式图标 2 秒
+        showCurrentModeIcon(2000);
+    }
     
     Serial.println("Exiting sleep mode (light sleep wakeup)");
 }
@@ -201,6 +291,17 @@ void showIconWithTimeout(const char* iconName, uint32_t durationMs) {
         screenOffDeadline = millis() + durationMs;
     } else {
         screenOffDeadline = 0;  // 常亮
+    }
+}
+
+// 显示当前模式图标（KO模式下根据AP模式显示不同图标）
+void showCurrentModeIcon(uint32_t durationMs) {
+    DeviceConfig* config = webConfig.getConfig();
+    if (config->currentMode == MODE_KOREADER && webConfig.isKOModeAP()) {
+        showIconWithTimeout("ko_ap", durationMs);
+    } else {
+        const char* modeIcons[] = {"page", "arrow", "media", "music", "play", "koreader"};
+        showIconWithTimeout(modeIcons[config->currentMode], durationMs);
     }
 }
 
@@ -291,7 +392,6 @@ void setup() {
     // 初始化按键
     buttons.begin();
     
-    // 初始化加速度计（参考 test.cpp 的实现）
     accelReady = accel.begin();
     
     if (accelReady) {
@@ -360,8 +460,7 @@ void setup() {
     }
     
     // 显示当前模式图标 2 秒后自动熄灭
-    const char* modeIcons[] = {"page", "arrow", "media", "music", "play", "koreader"};
-    showIconWithTimeout(modeIcons[config->currentMode], 2000);
+    showCurrentModeIcon(2000);
     
     // 初始化活动时间
     lastActivityTime = millis();
@@ -371,7 +470,95 @@ void loop() {
     // 更新按键状态（所有模式都需要）
     buttons.update();
     
-    // 休眠管理
+    // ========== 同时长按 B+C 检测（进入/退出游戏模式）==========
+    bool bDown = buttons.B.isDown();
+    bool cDown = buttons.C.isDown();
+    
+    if (bDown && cDown) {
+        if (!bcBothDown) {
+            // 刚开始同时按下，抑制单键事件
+            bcBothDown = true;
+            bcBothDownStartTime = millis();
+            bcLongPressTriggered = false;
+            bcSuppressSingle = true;
+        } else if (!bcLongPressTriggered && millis() - bcBothDownStartTime >= 800) {
+            // 同时按下超过 800ms，触发同时长按（进入/退出游戏模式）
+            bcLongPressTriggered = true;
+            updateActivity();
+            
+            gameMode = !gameMode;
+            
+            if (gameMode) {
+                // 进入游戏模式：关闭蓝牙和 WiFi，初始化游戏
+                disableBLE();
+                disableWiFi();
+                screenOffDeadline = 0;  // 屏幕常亮
+                
+                // 检查当前游戏是否被关闭，如果是则切换到第一个启用的游戏
+                DeviceConfig* config = webConfig.getConfig();
+                bool gameEnabled[8] = {
+                    config->gameSnakeEnable,
+                    config->gameCatchEnable,
+                    config->gameDiceEnable,
+                    config->gameStopwatchEnable,
+                    config->gameGomokuEnable,
+                    config->gameFlappyEnable,
+                    config->gameRacingEnable,
+                    config->gameTetrisEnable
+                };
+                if (!gameEnabled[currentGame]) {
+                    // 找到第一个启用的游戏
+                    bool found = false;
+                    for (int i = 0; i < 8; i++) {
+                        if (gameEnabled[i]) {
+                            currentGame = i;
+                            found = true;
+                            break;
+                        }
+                    }
+                    // 如果全部关闭，默认贪吃蛇
+                    if (!found) {
+                        currentGame = 0;
+                    }
+                }
+                
+                switch (currentGame) {
+                    case 0: snakeGame.begin(); break;
+                    case 1: catchGame.begin(); break;
+                    case 2: diceGame.begin(); break;
+                    case 3: stopwatchGame.begin(); break;
+                    case 4: gomokuGame.begin(); break;
+                    case 5: flappyGame.begin(); break;
+                    case 6: racingGame.begin(); break;
+                    case 7: tetrisGame.begin(); break;
+                }
+                Serial.println("Entered game mode");
+            } else {
+                // 退出游戏模式：恢复原来的模式
+                snakeGame.exit();
+                DeviceConfig* config = webConfig.getConfig();
+                applyModeWireless(config->currentMode);
+                showCurrentModeIcon(2000);
+                Serial.println("Exited game mode");
+            }
+            
+            // 等待按键松开
+            while (buttons.B.isDown() || buttons.C.isDown()) {
+                buttons.update();
+                delay(10);
+            }
+        }
+    } else {
+        // 有一个按键松开了，重置同时按下状态
+        if (bcBothDown) {
+            bcBothDown = false;
+        } else if (bcSuppressSingle && !bDown && !cDown) {
+            // 两个键都松开了，解除抑制
+            bcSuppressSingle = false;
+        }
+    }
+    
+    // ========== 休眠管理（游戏模式和普通模式都遵守）==========
     DeviceConfig* config = webConfig.getConfig();
     
     // 检测是否超时进入休眠（AP 有设备连接时不进入休眠）
@@ -380,6 +567,119 @@ void loop() {
     if (!apHasClient && config->sleepTimeoutMs > 0 && millis() - lastActivityTime > config->sleepTimeoutMs) {
         enterSleep();
         // 从休眠中唤醒后，继续执行后面的代码
+    }
+    
+    // ========== 游戏模式处理 ==========
+    if (gameMode) {
+        // 更新游戏
+        switch (currentGame) {
+            case 0: snakeGame.update(); break;
+            case 1: catchGame.update(); break;
+            case 2: diceGame.update(); break;
+            case 3: stopwatchGame.update(); break;
+            case 4: gomokuGame.update(); break;
+            case 5: flappyGame.update(); break;
+            case 6: racingGame.update(); break;
+            case 7: tetrisGame.update(); break;
+        }
+        
+        // 短按 A
+        if (buttons.A.pressed() && !bcSuppressSingle) {
+            updateActivity();
+            switch (currentGame) {
+                case 0: snakeGame.onButtonA(); break;
+                case 1: catchGame.onButtonA(); break;
+                case 2: diceGame.onButtonA(); break;
+                case 3: stopwatchGame.onButtonA(); break;
+                case 4: gomokuGame.onButtonA(); break;
+                case 5: flappyGame.onButtonA(); break;
+                case 6: racingGame.onButtonA(); break;
+                case 7: tetrisGame.onButtonA(); break;
+            }
+        }
+        
+        // 短按 B
+        if (buttons.B.pressed() && !bcSuppressSingle) {
+            updateActivity();
+            switch (currentGame) {
+                case 0: snakeGame.onButtonB(); break;
+                case 1: catchGame.onButtonB(); break;
+                case 2: diceGame.onButtonB(); break;
+                case 3: stopwatchGame.onButtonB(); break;
+                case 4: gomokuGame.onButtonB(); break;
+                case 5: flappyGame.onButtonB(); break;
+                case 6: racingGame.onButtonB(); break;
+                case 7: tetrisGame.onButtonB(); break;
+            }
+        }
+        
+        // 短按 C
+        if (buttons.C.pressed() && !bcSuppressSingle) {
+            updateActivity();
+            switch (currentGame) {
+                case 0: snakeGame.onButtonC(); break;
+                case 1: catchGame.onButtonC(); break;
+                case 2: diceGame.onButtonC(); break;
+                case 3: stopwatchGame.onButtonC(); break;
+                case 4: gomokuGame.onButtonC(); break;
+                case 5: flappyGame.onButtonC(); break;
+                case 6: racingGame.onButtonC(); break;
+                case 7: tetrisGame.onButtonC(); break;
+            }
+        }
+        
+        // 长按 A：切换游戏（跳过被关闭的游戏）
+        if (buttons.A.longPressed() && !bcSuppressSingle) {
+            updateActivity();
+            DeviceConfig* cfg = webConfig.getConfig();
+            
+            bool gameEnabled[8] = {
+                cfg->gameSnakeEnable, cfg->gameCatchEnable, cfg->gameDiceEnable,
+                cfg->gameStopwatchEnable, cfg->gameGomokuEnable, cfg->gameFlappyEnable,
+                cfg->gameRacingEnable, cfg->gameTetrisEnable
+            };
+            
+            uint8_t nextGame = currentGame;
+            bool found = false;
+            for (int i = 0; i < 8; i++) {
+                nextGame = (nextGame + 1) % 8;
+                if (gameEnabled[nextGame]) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) nextGame = 0;
+            
+            currentGame = nextGame;
+            switch (currentGame) {
+                case 0: snakeGame.begin(); break;
+                case 1: catchGame.begin(); break;
+                case 2: diceGame.begin(); break;
+                case 3: stopwatchGame.begin(); break;
+                case 4: gomokuGame.begin(); break;
+                case 5: flappyGame.begin(); break;
+                case 6: racingGame.begin(); break;
+                case 7: tetrisGame.begin(); break;
+            }
+        }
+        
+        // 长按 B：重新开始当前游戏
+        if (buttons.B.longPressed() && !bcSuppressSingle) {
+            updateActivity();
+            switch (currentGame) {
+                case 0: snakeGame.begin(); break;
+                case 1: catchGame.begin(); break;
+                case 2: diceGame.begin(); break;
+                case 3: stopwatchGame.begin(); break;
+                case 4: gomokuGame.begin(); break;
+                case 5: flappyGame.begin(); break;
+                case 6: racingGame.begin(); break;
+                case 7: tetrisGame.begin(); break;
+            }
+        }
+        
+        delay(10);
+        return;  // 游戏模式下不执行原来的处理
     }
     
     // 定期检查 BLE 连接状态（只有蓝牙启用时才检查）
@@ -641,7 +941,6 @@ void loop() {
         // 长按C：对调翻页方向（play 模式下不生效）
         
         DeviceConfig* config = webConfig.getConfig();
-        const char* modeIcons[] = {"page", "arrow", "media", "music", "play", "koreader"};
         
         // 同时长按 A+B 检测（更灵敏的方式）
         bool aDown = buttons.A.isDown();
@@ -685,11 +984,18 @@ void loop() {
                     // 保存当前模式，切换到 koreader 模式
                     lastNonKoreaderMode = config->currentMode;
                     config->currentMode = MODE_KOREADER;
+                    // 进入KO模式时默认STA模式（连接路由器）
+                    webConfig.setKOModeAP(false);
                 }
                 webConfig.saveConfig();
                 // 切换模式时同时切换 WiFi 和蓝牙状态
                 applyModeWireless(config->currentMode);
-                showIconWithTimeout(modeIcons[config->currentMode], 2000);
+                // KO模式下根据AP模式显示不同图标
+                if (config->currentMode == MODE_KOREADER && webConfig.isKOModeAP()) {
+                    showIconWithTimeout("ko_ap", 2000);
+                } else {
+                    showCurrentModeIcon(2000);
+                }
             }
         } else {
             // 有一个按键松开了，重置同时按下状态
@@ -711,17 +1017,21 @@ void loop() {
             showIconWithTimeout(config->pageDisplayEnable ? "arrow_on" : "arrow_off", 2000);
         }
         
-        // 长按A：切换模式（koreader模式下如果AP已关闭则重新打开AP）
+        // 长按A：KO模式下切换AP/STA模式，其他模式下切换模式
         if (buttons.A.longPressed() && !abSuppressSingle) {
             updateActivity();
             if (config->currentMode == MODE_KOREADER) {
-                if (!wifiAPEnabled) {
-                    // koreader 模式下 AP 已关闭，长按 A 重新打开 AP
-                    enableWiFi();
-                    showIconWithTimeout("koreader", 2000);
+                // KO模式下：切换AP模式和STA模式
+                bool newAPMode = !webConfig.isKOModeAP();
+                webConfig.setKOModeAP(newAPMode);
+                if (newAPMode) {
+                    // AP模式：显示小K图标
+                    showIconWithTimeout("ko_ap", 2000);
+                    Serial.println("KO mode: AP mode enabled, connect to AlphaPi-Config WiFi");
                 } else {
-                    // AP 已开启，显示 koreader 图标
+                    // STA模式：显示正常K图标
                     showIconWithTimeout("koreader", 2000);
+                    Serial.println("KO mode: STA mode enabled, connecting to router");
                 }
             } else {
                 // 其他模式：切换模式
@@ -729,7 +1039,7 @@ void loop() {
                 webConfig.saveConfig();
                 // 切换模式时同时切换 WiFi 和蓝牙状态
                 applyModeWireless(config->currentMode);
-                showIconWithTimeout(modeIcons[config->currentMode], 2000);
+                showCurrentModeIcon(2000);
             }
         }
         
@@ -825,7 +1135,7 @@ void loop() {
                 display.showIcon("direction_swap");
                 delay(500);
                 // 然后显示当前模式的图标
-                showIconWithTimeout(modeIcons[config->currentMode], 2000);
+                showCurrentModeIcon(2000);
             }
         }
         
