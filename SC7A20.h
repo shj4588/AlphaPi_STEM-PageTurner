@@ -43,6 +43,10 @@ public:
     void setQuietDurationMs(uint32_t ms);    // 静止时长（摇晃结束后静止这么久才触发翻页）
     void setShakeCooldownMs(uint32_t ms);    // 冷却时间
     
+    // 各轴独立阈值模式
+    void setShakeMode(uint8_t mode);         // 0=三轴差值之和模式（原模式），1=各轴独立阈值模式
+    void setShakeThresholdXYZ(int x, int y, int z); // 各轴差值阈值（模式1时使用）
+    
     // 兼容旧接口（内部映射到新参数）
     void setQuietSens(int sens);           // 不再使用，保留兼容
     void setShakeWinMs(uint32_t ms);       // 不再使用，保留兼容
@@ -54,9 +58,9 @@ private:
     static const uint8_t I2C_ADDR = 0x18;
     static const uint8_t REG_CTRL1 = 0x20;
     static const uint8_t REG_WHO_AM_I = 0x0F;
-    static const uint8_t REG_OUT_X_L = 0x02;
-    static const uint8_t REG_OUT_Y_L = 0x04;
-    static const uint8_t REG_OUT_Z_L = 0x06;
+    static const uint8_t REG_OUT_X_L = 0x28;
+    static const uint8_t REG_OUT_Y_L = 0x2A;
+    static const uint8_t REG_OUT_Z_L = 0x2C;
     
     // I2C 引脚
     static const uint8_t SDA_PIN = 6;
@@ -81,11 +85,17 @@ private:
     uint32_t _lastReadTs;
     
     // 摇晃参数
-    int _shakeThreshold;           // 摇晃阈值
+    int _shakeThreshold;           // 摇晃阈值（模式0：三轴差值之和）
     uint32_t _shakeMinDurationMs;  // 最小摇晃时长
     uint32_t _quietDurationMs;     // 静止时长
     uint32_t _shakeCooldownMs;     // 冷却时间
     uint32_t _shakeCoolTimer;      // 冷却计时器
+    
+    // 各轴独立阈值模式（模式1）
+    uint8_t _shakeMode;             // 0=三轴差值之和模式，1=各轴独立阈值模式
+    int _shakeThresholdX;           // X轴差值阈值
+    int _shakeThresholdY;           // Y轴差值阈值
+    int _shakeThresholdZ;           // Z轴差值阈值
     
     // 摇晃状态机
     enum ShakeState {

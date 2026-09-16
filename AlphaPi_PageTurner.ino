@@ -101,7 +101,7 @@ uint32_t screenOffDeadline = 0;  // 0 表示常亮，否则为自动熄灭的时
 // WiFi AP 管理
 bool wifiAPEnabled = false;
 uint32_t apNoClientTimer = 0;  // AP 无设备连接计时
-const uint32_t AP_NO_CLIENT_TIMEOUT = 60000;  // 1 分钟无设备连接自动关闭热点
+const uint32_t AP_NO_CLIENT_TIMEOUT = 60000;  // STA模式下1分钟无设备连接自动关闭AP热点
 
 // BLE 状态
 bool bleEnabled = false;
@@ -109,26 +109,42 @@ bool bleEnabled = false;
 // 上一个非 koreader 模式（用于从 koreader 模式返回）
 uint8_t lastNonKoreaderMode = MODE_PAGE;
 
-// 获取下一个启用的模式（跳过关闭的模式）
+// 获取下一个启用的蓝牙模式（跳过关闭的模式和KO模式）
 uint8_t getNextEnabledMode(uint8_t currentMode) {
     DeviceConfig* config = webConfig.getConfig();
-    bool modeEnabled[] = {
+    // 蓝牙模式列表（注意：跳过MODE_KOREADER=5）
+    const uint8_t btModes[] = {MODE_PAGE, MODE_ARROW, MODE_MEDIA, MODE_MUSIC, MODE_PLAY, MODE_CUSTOM};
+    const bool modeEnabled[] = {
         config->modePageEnable,
         config->modeArrowEnable,
         config->modeMediaEnable,
         config->modeMusicEnable,
-        config->modePlayEnable
+        config->modePlayEnable,
+        config->modeCustomEnable
     };
+    const int BT_MODE_COUNT = 6;
     
-    // 最多循环 5 次，找到下一个启用的模式
-    for (int i = 0; i < 5; i++) {
-        currentMode = (currentMode + 1) % 5;
-        if (modeEnabled[currentMode]) {
-            return currentMode;
+    // 找到当前模式在btModes中的索引
+    int currentIndex = -1;
+    for (int i = 0; i < BT_MODE_COUNT; i++) {
+        if (btModes[i] == currentMode) {
+            currentIndex = i;
+            break;
         }
     }
     
-    // 如果所有模式都关闭了，返回当前模式
+    // 如果当前模式不在蓝牙模式列表中（比如在KO模式），从0开始
+    if (currentIndex == -1) currentIndex = 0;
+    
+    // 循环找到下一个启用的模式
+    for (int i = 0; i < BT_MODE_COUNT; i++) {
+        currentIndex = (currentIndex + 1) % BT_MODE_COUNT;
+        if (modeEnabled[currentIndex]) {
+            return btModes[currentIndex];
+        }
+    }
+    
+    // 如果所有蓝牙模式都关闭了，返回当前模式
     return currentMode;
 }
 
@@ -224,6 +240,8 @@ void enterSleep() {
     accel.setShakeMinDurationMs(config->shakeMinDurationMs);
     accel.setQuietHoldMs(config->quietHoldMs);
     accel.setShakeCooldownMs(config->shakeCooldownMs);
+    accel.setShakeMode(config->shakeMode);
+    accel.setShakeThresholdXYZ(config->shakeThresholdX, config->shakeThresholdY, config->shakeThresholdZ);
     
     // 恢复 WiFi（koreader 模式下）
     if (config->currentMode == MODE_KOREADER) {
@@ -300,8 +318,19 @@ void showCurrentModeIcon(uint32_t durationMs) {
     if (config->currentMode == MODE_KOREADER && webConfig.isKOModeAP()) {
         showIconWithTimeout("ko_ap", durationMs);
     } else {
-        const char* modeIcons[] = {"page", "arrow", "media", "music", "play", "koreader"};
+        const char* modeIcons[] = {"page", "arrow", "media", "music", "play", "koreader", "custom"};
         showIconWithTimeout(modeIcons[config->currentMode], durationMs);
+    }
+}
+
+// 读取加速度数值（供Web页实时显示使用）
+void readAccelData(int16_t &x, int16_t &y, int16_t &z) {
+    if (accelReady) {
+        accel.readRaw(x, y, z);
+    } else {
+        x = 0;
+        y = 0;
+        z = 0;
     }
 }
 
@@ -425,26 +454,41 @@ void setup() {
     accel.setShakeMinDurationMs(config->shakeMinDurationMs); // 最小摇晃时长
     accel.setQuietHoldMs(config->quietHoldMs);            // 静止时长（映射到 quietDurationMs）
     accel.setShakeCooldownMs(config->shakeCooldownMs);    // 冷却时间
+    accel.setShakeMode(config->shakeMode);                 // 摇晃检测模式
+    accel.setShakeThresholdXYZ(config->shakeThresholdX, config->shakeThresholdY, config->shakeThresholdZ); // 各轴阈值
+    
+    // 设置加速度读取函数（供Web页实时显示使用）
+    webConfig.setAccelReader(readAccelData);
     
     // 从配置加载按键长按时间
     buttons.A.setLongPressTime(config->longPressMs);
     buttons.B.setLongPressTime(config->longPressMs);
     buttons.C.setLongPressTime(config->longPressMs);
     
-    // 检查当前模式是否被关闭，如果是则切换到第一个启用的模式
+    // 检查当前模式是否被关闭，如果是则切换到第一个启用的蓝牙模式
     if (config->currentMode != MODE_KOREADER) {
-        bool modeEnabled[] = {
+        const uint8_t btModes[] = {MODE_PAGE, MODE_ARROW, MODE_MEDIA, MODE_MUSIC, MODE_PLAY, MODE_CUSTOM};
+        const bool modeEnabled[] = {
             config->modePageEnable,
             config->modeArrowEnable,
             config->modeMediaEnable,
             config->modeMusicEnable,
-            config->modePlayEnable
+            config->modePlayEnable,
+            config->modeCustomEnable
         };
-        if (!modeEnabled[config->currentMode]) {
-            // 当前模式被关闭了，找到第一个启用的模式
-            for (int i = 0; i < 5; i++) {
+        // 检查当前模式是否被关闭
+        bool currentEnabled = false;
+        for (int i = 0; i < 6; i++) {
+            if (btModes[i] == config->currentMode && modeEnabled[i]) {
+                currentEnabled = true;
+                break;
+            }
+        }
+        if (!currentEnabled) {
+            // 当前模式被关闭了，找到第一个启用的蓝牙模式
+            for (int i = 0; i < 6; i++) {
                 if (modeEnabled[i]) {
-                    config->currentMode = i;
+                    config->currentMode = btModes[i];
                     break;
                 }
             }
@@ -690,19 +734,36 @@ void loop() {
     // 处理 Web 客户端请求（只有 WiFi 启用时才处理）
     if (wifiAPEnabled) {
         webConfig.handleClient();
+        delay(10);  // 给WiFi协议栈更多处理时间，特别是STA模式下避免Web页面卡死
         
-        // 检查 AP 无设备连接，1 分钟后自动关闭热点
-        uint8_t clientCount = WiFi.softAPgetStationNum();
-        if (clientCount > 0) {
-            // 有设备连接，重置计时
-            apNoClientTimer = millis();
-        } else {
-            // 无设备连接，检查是否超时
-            if (millis() - apNoClientTimer > AP_NO_CLIENT_TIMEOUT) {
-                Serial.println("AP no client for 1 minute, closing AP");
-                // 关闭 AP 热点，但保留 STA 连接
-                WiFi.softAPdisconnect(true);
-                wifiAPEnabled = false;
+        // KO模式 + STA子模式：AP热点无设备连接1分钟后自动关闭AP（但保持STA连接）
+        // KO模式 + AP子模式：保持AP热点开启
+        // 非KO模式：WiFi已被applyModeWireless直接关闭
+        if (config->currentMode == MODE_KOREADER && !webConfig.isKOModeAP()) {
+            // STA模式：检查AP热点是否有设备连接
+            uint8_t apClientCount = WiFi.softAPgetStationNum();
+            if (apClientCount > 0) {
+                // 有设备连接，重置计时
+                apNoClientTimer = millis();
+            } else {
+                // 无设备连接，检查是否超时
+                if (millis() - apNoClientTimer > AP_NO_CLIENT_TIMEOUT) {
+                    Serial.println("KO STA mode: AP no client for 1 minute, closing AP hotspot (STA stays connected)");
+                    // 只关闭AP热点，保持STA连接
+                    WiFi.softAPdisconnect(true);
+                    apNoClientTimer = millis();  // 重置计时，避免重复关闭
+                }
+            }
+        } else if (config->currentMode == MODE_KOREADER && webConfig.isKOModeAP()) {
+            // AP模式：确保AP热点开启（如果之前被STA模式关闭了）
+            if (WiFi.getMode() == WIFI_STA) {
+                Serial.println("KO AP mode: AP was closed, restarting AP hotspot");
+                WiFi.mode(WIFI_AP_STA);
+                IPAddress apIP(192, 168, 4, 1);
+                IPAddress netMsk(255, 255, 255, 0);
+                WiFi.softAPConfig(apIP, apIP, netMsk);
+                WiFi.softAP("AlphaPi-Config");
+                apNoClientTimer = millis();
             }
         }
     }
@@ -961,21 +1022,31 @@ void loop() {
                 // 切换到/离开 koreader 模式
                 if (config->currentMode == MODE_KOREADER) {
                     // 从 koreader 模式返回上一个非 koreader 模式
-                    // 如果上一个模式被关闭了，找到第一个启用的模式
-                    bool modeEnabled[] = {
+                    // 如果上一个模式被关闭了，找到第一个启用的蓝牙模式
+                    const uint8_t btModes[] = {MODE_PAGE, MODE_ARROW, MODE_MEDIA, MODE_MUSIC, MODE_PLAY, MODE_CUSTOM};
+                    const bool modeEnabled[] = {
                         config->modePageEnable,
                         config->modeArrowEnable,
                         config->modeMediaEnable,
                         config->modeMusicEnable,
-                        config->modePlayEnable
+                        config->modePlayEnable,
+                        config->modeCustomEnable
                     };
-                    if (modeEnabled[lastNonKoreaderMode]) {
+                    // 检查上一个模式是否被启用
+                    bool lastEnabled = false;
+                    for (int i = 0; i < 6; i++) {
+                        if (btModes[i] == lastNonKoreaderMode && modeEnabled[i]) {
+                            lastEnabled = true;
+                            break;
+                        }
+                    }
+                    if (lastEnabled) {
                         config->currentMode = lastNonKoreaderMode;
                     } else {
-                        // 找到第一个启用的模式
-                        for (int i = 0; i < 5; i++) {
+                        // 找到第一个启用的蓝牙模式
+                        for (int i = 0; i < 6; i++) {
                             if (modeEnabled[i]) {
-                                config->currentMode = i;
+                                config->currentMode = btModes[i];
                                 break;
                             }
                         }
@@ -1024,6 +1095,11 @@ void loop() {
                 // KO模式下：切换AP模式和STA模式
                 bool newAPMode = !webConfig.isKOModeAP();
                 webConfig.setKOModeAP(newAPMode);
+                // 修复：如果WiFi之前因为无连接被关闭了，切换模式时重新启动WiFi
+                if (!wifiAPEnabled) {
+                    Serial.println("WiFi was closed, restarting WiFi for KO mode");
+                    enableWiFi();
+                }
                 if (newAPMode) {
                     // AP模式：显示小K图标
                     showIconWithTimeout("ko_ap", 2000);
@@ -1068,15 +1144,21 @@ void loop() {
             
             // 根据模式显示对应图标
             if (config->pageDisplayEnable) {
-                const char* icon;
-                if (config->currentMode == MODE_MEDIA) {
-                    icon = isNext ? "volume_up" : "volume_down";
-                } else if (config->currentMode == MODE_PLAY) {
-                    icon = isNext ? "stop" : "play_pause";
+                if (config->currentMode == MODE_CUSTOM) {
+                    // 自定义键值模式：B键显示字母B
+                    display.showPattern(ICON_LETTER_B);
+                    screenOffDeadline = millis() + 500;
                 } else {
-                    icon = isNext ? "arrow_right" : "arrow_left";
+                    const char* icon;
+                    if (config->currentMode == MODE_MEDIA) {
+                        icon = isNext ? "volume_up" : "volume_down";
+                    } else if (config->currentMode == MODE_PLAY) {
+                        icon = isNext ? "stop" : "play_pause";
+                    } else {
+                        icon = isNext ? "arrow_right" : "arrow_left";
+                    }
+                    showIconWithTimeout(icon, 500);
                 }
-                showIconWithTimeout(icon, 500);
             }
         }
         
@@ -1113,15 +1195,21 @@ void loop() {
             
             // 根据模式显示对应图标
             if (config->pageDisplayEnable) {
-                const char* icon;
-                if (config->currentMode == MODE_MEDIA) {
-                    icon = isNext ? "volume_up" : "volume_down";
-                } else if (config->currentMode == MODE_PLAY) {
-                    icon = isNext ? "stop" : "play_pause";
+                if (config->currentMode == MODE_CUSTOM) {
+                    // 自定义键值模式：C键显示字母C
+                    display.showPattern(ICON_LETTER_C);
+                    screenOffDeadline = millis() + 500;
                 } else {
-                    icon = isNext ? "arrow_right" : "arrow_left";
+                    const char* icon;
+                    if (config->currentMode == MODE_MEDIA) {
+                        icon = isNext ? "volume_up" : "volume_down";
+                    } else if (config->currentMode == MODE_PLAY) {
+                        icon = isNext ? "stop" : "play_pause";
+                    } else {
+                        icon = isNext ? "arrow_right" : "arrow_left";
+                    }
+                    showIconWithTimeout(icon, 500);
                 }
-                showIconWithTimeout(icon, 500);
             }
         }
         

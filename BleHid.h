@@ -44,6 +44,12 @@ public:
     // 发送键盘键（按下并释放）
     void sendKey(uint8_t key);
     
+    // 发送组合键（最多3个键同时按下，然后释放，0表示不使用）
+    void sendCombination(uint8_t keys[3]);
+    
+    // 发送组合键（支持键盘键和媒体键混合，types[i]=0键盘键，1媒体键）
+    void sendCombination(uint8_t keys[3], uint8_t types[3]);
+    
     // 发送媒体键（按下并释放）
     void sendMedia(uint16_t mediaKey);
     

@@ -79,5 +79,7 @@ extern const uint8_t ICON_SHAKE_ON[25];    // 波浪线
 extern const uint8_t ICON_SHAKE_OFF[25];   // 叉号
 extern const uint8_t ICON_DIRECTION_SWAP[25]; // 圆圈
 extern const uint8_t ICON_CLEAR[25];       // 全灭
+extern const uint8_t ICON_LETTER_B[25];    // 字母B（自定义键值模式B键）
+extern const uint8_t ICON_LETTER_C[25];    // 字母C（自定义键值模式C键）
 
 #endif // MATRIX_DISPLAY_H

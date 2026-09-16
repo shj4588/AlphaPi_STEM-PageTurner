@@ -37,6 +37,12 @@ SC7A20::SC7A20() {
     _shakeCooldownMs = 1000;
     _shakeCoolTimer = 0;
     
+    // 各轴独立阈值模式默认参数
+    _shakeMode = 0;  // 默认使用原模式（三轴差值之和）
+    _shakeThresholdX = 1000;
+    _shakeThresholdY = 1000;
+    _shakeThresholdZ = 1000;
+    
     _shakeState = SHAKE_IDLE;
     _shakeStartMs = 0;
     _quietStartMs = 0;
@@ -44,14 +50,23 @@ SC7A20::SC7A20() {
 }
 
 int16_t SC7A20::readAxisOnce(uint8_t reg) {
-    // 单次读取
+    // SC7A20 不支持 I2C 地址自动递增，必须分别读取低字节和高字节
+    // 读取低字节
     Wire.beginTransmission(I2C_ADDR);
     Wire.write(reg);
-    Wire.endTransmission(true);
-    Wire.requestFrom((uint8_t)I2C_ADDR, (uint8_t)2);
-    if (Wire.available() < 2) return 0;
+    Wire.endTransmission();
+    Wire.requestFrom((uint8_t)I2C_ADDR, (uint8_t)1);
+    if (Wire.available() < 1) return 0;
     uint8_t l = Wire.read();
+    
+    // 读取高字节
+    Wire.beginTransmission(I2C_ADDR);
+    Wire.write(reg + 1);
+    Wire.endTransmission();
+    Wire.requestFrom((uint8_t)I2C_ADDR, (uint8_t)1);
+    if (Wire.available() < 1) return 0;
     uint8_t h = Wire.read();
+    
     int16_t val = (int16_t)((h << 8) | l);
     return val;
 }
@@ -238,12 +253,22 @@ bool SC7A20::checkShakeEvent() {
     _lastY = y;
     _lastZ = z;
     
-    // 三轴差值之和
-    int32_t total = abs(dx) + abs(dy) + abs(dz);
-    bool isShaking = total > _shakeThreshold;
-    // 注意：静止判断用 total < shake_threshold（摇晃减弱就算静止），
+    // 根据模式判断是否在摇晃
+    bool isShaking;
+    if (_shakeMode == 0) {
+        // 模式0：三轴差值之和（原模式）
+        int32_t total = abs(dx) + abs(dy) + abs(dz);
+        isShaking = total > _shakeThreshold;
+    } else {
+        // 模式1：各轴独立阈值，任一轴差值超过对应阈值即算摇晃
+        // 阈值为0时忽略该轴
+        isShaking = (_shakeThresholdX > 0 && abs(dx) > _shakeThresholdX) || 
+                    (_shakeThresholdY > 0 && abs(dy) > _shakeThresholdY) || 
+                    (_shakeThresholdZ > 0 && abs(dz) > _shakeThresholdZ);
+    }
+    // 注意：静止判断用 !isShaking（摇晃减弱就算静止），
     // 不再用 quiet_threshold，因为摇晃后设备可能有微小晃动导致
-    // total 一直在 quiet_threshold 和 shake_threshold 之间，无法进入静止
+    // 一直在 quiet_threshold 和 shake_threshold 之间，无法进入静止
     
     // ========== 状态机 ==========
     switch (_shakeState) {
@@ -312,6 +337,17 @@ void SC7A20::setQuietDurationMs(uint32_t ms) {
 
 void SC7A20::setShakeCooldownMs(uint32_t ms) {
     _shakeCooldownMs = ms;
+}
+
+// 各轴独立阈值模式
+void SC7A20::setShakeMode(uint8_t mode) {
+    _shakeMode = mode;
+}
+
+void SC7A20::setShakeThresholdXYZ(int x, int y, int z) {
+    _shakeThresholdX = x;
+    _shakeThresholdY = y;
+    _shakeThresholdZ = z;
 }
 
 // 兼容旧接口

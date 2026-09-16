@@ -22,6 +22,7 @@
 #define MODE_MUSIC  3
 #define MODE_PLAY   4
 #define MODE_KOREADER 5
+#define MODE_CUSTOM 6
 
 // 按键动作定义
 #define ACTION_NONE             0
@@ -41,6 +42,12 @@
 #define ACTION_SPACE            14
 #define ACTION_ESC              15
 #define ACTION_TAB              16
+#define ACTION_CUSTOM_B         17  // 自定义B键（发送customKeyB）
+#define ACTION_CUSTOM_C         18  // 自定义C键（发送customKeyC）
+
+// 自定义键类型
+#define KEY_TYPE_KEYBOARD       0   // 键盘键（Keyboard Report）
+#define KEY_TYPE_MEDIA          1   // 媒体键（Consumer Report）
 
 struct DeviceConfig {
     // 设备设置
@@ -48,15 +55,26 @@ struct DeviceConfig {
     uint8_t currentMode;
     
     // 各模式键位配置（A短按、A长按、B短按、B长按、C短按、C长按）
-    uint8_t keyActions[5][6];
+    // 7个模式：0=page,1=arrow,2=media,3=music,4=play,5=koreader,6=custom
+    uint8_t keyActions[7][6];
+    
+    // 自定义模式组合键（每个按键最多3个键同时按，0表示不使用）
+    uint8_t customKeyB[3];  // 自定义模式B短按发送的组合键
+    uint8_t customKeyBType[3];  // B键每个键的类型（0=键盘键，1=媒体键）
+    uint8_t customKeyC[3];  // 自定义模式C短按发送的组合键
+    uint8_t customKeyCType[3];  // C键每个键的类型（0=键盘键，1=媒体键）
     
     // 摇晃检测参数
     bool shakeEnable;
     uint8_t shakeAction;  // 摇晃触发的动作
-    int shakeSens;              // 摇晃阈值（三轴差值之和超过此值算摇晃中）
+    int shakeSens;              // 摇晃阈值（三轴差值之和超过此值算摇晃中，模式0使用）
     uint32_t shakeMinDurationMs; // 最小摇晃时长（摇晃至少持续这么久才算有效摇晃）
     uint32_t quietHoldMs;       // 静止时长（摇晃结束后静止这么久才触发翻页）
     uint32_t shakeCooldownMs;   // 冷却时间
+    uint8_t shakeMode;          // 摇晃检测模式：0=三轴差值之和（原模式），1=各轴独立阈值
+    int shakeThresholdX;        // X轴差值阈值（模式1使用）
+    int shakeThresholdY;        // Y轴差值阈值（模式1使用）
+    int shakeThresholdZ;        // Z轴差值阈值（模式1使用）
     // 以下参数已不再使用，保留兼容
     uint8_t shakeNeedCnt;
     uint32_t shakeWinMs;
@@ -67,6 +85,7 @@ struct DeviceConfig {
     bool directionSwap;  // 翻页方向对调
     bool pageDisplayEnable;  // 翻页屏幕显示开关
     uint32_t sleepTimeoutMs;  // 休眠超时时间（毫秒），0=不休眠
+    bool accelDisplayEnable;  // Web页实时加速度数值显示开关
     
     // 模式启用状态（true=启用，false=关闭，切换时跳过）
     bool modePageEnable;    // page 模式
@@ -74,6 +93,7 @@ struct DeviceConfig {
     bool modeMediaEnable;   // media 模式
     bool modeMusicEnable;   // music 模式
     bool modePlayEnable;    // play 模式
+    bool modeCustomEnable;  // custom 自定义模式
     
     // 游戏启用状态（true=启用，false=关闭，切换时跳过）
     bool gameSnakeEnable;       // 贪吃蛇
@@ -145,6 +165,10 @@ public:
     static const char* KO_AP_SSID;
     static const char* KO_AP_IP;  // 手机连接后的IP
     
+    // 加速度计实时数值显示
+    typedef void (*AccelReaderFunc)(int16_t &x, int16_t &y, int16_t &z);
+    void setAccelReader(AccelReaderFunc reader);
+    
 private:
     WebServer* _server;
     Preferences _prefs;
@@ -157,14 +181,27 @@ private:
     // KOReader AP 模式
     bool _koAPMode;
     
+    // 加速度计读取函数
+    AccelReaderFunc _accelReader;
+    
+    // HTML页面缓存（避免每次请求都重新生成大量字符串导致内存碎片）
+    String _cachedPage;
+    bool _pageCacheValid;
+    
     // 生成配置页面 HTML
     String generateConfigPage();
     
     // 处理根路径
     void handleRoot();
     
+    // 键值表页面
+    void handleKeysPage();
+    
     // 处理保存配置
     void handleSave();
+    
+    // 加速度数值API
+    void handleAccel();
     
     // 设置默认配置
     void setDefaultConfig();

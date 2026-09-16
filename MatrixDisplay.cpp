@@ -126,6 +126,33 @@ const uint8_t ICON_KO_AP[25] = {
     0,1,0,0,1
 };
 
+// 自定义模式图标：字母U（User用户自定义）
+const uint8_t ICON_CUSTOM[25] = {
+    1,0,0,0,1,
+    1,0,0,0,1,
+    1,0,0,0,1,
+    1,0,0,0,1,
+    0,1,1,1,0
+};
+
+// 字母B（自定义键值模式下B键按下显示）
+const uint8_t ICON_LETTER_B[25] = {
+    1,1,1,0,0,
+    1,0,0,1,0,
+    1,1,1,0,0,
+    1,0,0,1,0,
+    1,1,1,0,0
+};
+
+// 字母C（自定义键值模式下C键按下显示）
+const uint8_t ICON_LETTER_C[25] = {
+    0,1,1,0,0,
+    1,0,0,1,0,
+    1,0,0,0,0,
+    1,0,0,1,0,
+    0,1,1,0,0
+};
+
 const uint8_t ICON_VOLUME_UP[25] = {
     0,0,0,0,0,
     0,0,1,0,0,
@@ -308,6 +335,7 @@ void MatrixDisplay::showIcon(const char* iconName) {
     else if (strcmp(iconName, "arrow_off") == 0) showPattern(ICON_ARROW_OFF);
     else if (strcmp(iconName, "koreader") == 0) showPattern(ICON_KOREADER);
     else if (strcmp(iconName, "ko_ap") == 0) showPattern(ICON_KO_AP);
+    else if (strcmp(iconName, "custom") == 0) showPattern(ICON_CUSTOM);
     else if (strcmp(iconName, "volume_up") == 0) showPattern(ICON_VOLUME_UP);
     else if (strcmp(iconName, "volume_down") == 0) showPattern(ICON_VOLUME_DOWN);
     else if (strcmp(iconName, "shake_on") == 0) showPattern(ICON_SHAKE_ON);

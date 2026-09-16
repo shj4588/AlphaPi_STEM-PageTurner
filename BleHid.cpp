@@ -45,6 +45,48 @@ void BleHid::sendKey(uint8_t key) {
     _bleKeyboard.tap(key);
 }
 
+void BleHid::sendCombination(uint8_t keys[3]) {
+    if (!_connected) return;
+    int count = 0;
+    for (int i = 0; i < 3; i++) {
+        if (keys[i] != 0) {
+            _bleKeyboard.press(keys[i]);
+            count++;
+        }
+    }
+    if (count > 0) {
+        delay(15);
+        _bleKeyboard.releaseAll();
+    }
+}
+
+void BleHid::sendCombination(uint8_t keys[3], uint8_t types[3]) {
+    if (!_connected) return;
+    
+    // 先处理键盘键（同时按下）
+    int kbCount = 0;
+    for (int i = 0; i < 3; i++) {
+        if (keys[i] != 0 && types[i] == 0) {
+            _bleKeyboard.press(keys[i]);
+            kbCount++;
+        }
+    }
+    if (kbCount > 0) {
+        delay(15);
+        _bleKeyboard.releaseAll();
+        delay(5);
+    }
+    
+    // 再处理媒体键（单独发送，因为媒体键是Consumer Report）
+    for (int i = 0; i < 3; i++) {
+        if (keys[i] != 0 && types[i] == 1) {
+            uint16_t mediaKey = keys[i];  // 明确转换为uint16_t，确保调用tap(uint16_t)重载
+            _bleKeyboard.tap(mediaKey);
+            delay(15);
+        }
+    }
+}
+
 void BleHid::sendMedia(uint16_t mediaKey) {
     if (!_connected) return;
     _bleKeyboard.tap(mediaKey);
