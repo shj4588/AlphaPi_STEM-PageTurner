@@ -69,6 +69,7 @@ struct DeviceConfig {
     uint8_t shakeAction;  // 摇晃触发的动作
     int shakeSens;              // 摇晃阈值（三轴差值之和超过此值算摇晃中，模式0使用）
     uint32_t shakeMinDurationMs; // 最小摇晃时长（摇晃至少持续这么久才算有效摇晃）
+    uint32_t shakeMaxDurationMs; // 最大摇晃时长（摇晃持续超过这么久就算误操作，不触发翻页）
     uint32_t quietHoldMs;       // 静止时长（摇晃结束后静止这么久才触发翻页）
     uint32_t shakeCooldownMs;   // 冷却时间
     uint8_t shakeMode;          // 摇晃检测模式：0=三轴差值之和（原模式），1=各轴独立阈值
@@ -199,6 +200,9 @@ private:
     
     // 处理保存配置
     void handleSave();
+    
+    // 处理重启
+    void handleReboot();
     
     // 加速度数值API
     void handleAccel();

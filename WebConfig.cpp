@@ -1,4 +1,4 @@
-/*
+﻿/*
  * WebConfig.cpp - Web 配置功能实现
  */
 
@@ -114,6 +114,8 @@ void WebConfig::setDefaultConfig() {
     _config.shakeNeedCnt = 4;
     _config.shakeWinMs = 2000;
     _config.quietSens = 600;
+    _config.shakeMinDurationMs = 100;
+    _config.shakeMaxDurationMs = 1000;  // 默认最大1秒，超过就算误操作
     _config.quietHoldMs = 150;
     _config.shakeCooldownMs = 1000;
     // 各轴独立阈值模式
@@ -196,6 +198,7 @@ void WebConfig::loadConfig() {
     _config.shakeAction = _prefs.getUChar("shake_act", ACTION_PAGE_DOWN);
     _config.shakeSens = _prefs.getInt("shake_sens", 3000);              // 摇晃阈值
     _config.shakeMinDurationMs = _prefs.getUInt("shake_min_dur", 100);   // 最小摇晃时长
+    _config.shakeMaxDurationMs = _prefs.getUInt("shake_max_dur", 1000);   // 最大摇晃时长
     _config.quietHoldMs = _prefs.getUInt("quiet_hold", 300);             // 静止时长
     _config.shakeCooldownMs = _prefs.getUInt("shake_cd", 1000);          // 冷却时间
     // 各轴独立阈值模式
@@ -213,7 +216,8 @@ void WebConfig::loadConfig() {
     _config.directionSwap = _prefs.getBool("dir_swap", false);
     _config.pageDisplayEnable = _prefs.getBool("page_disp", true);
     _config.sleepTimeoutMs = _prefs.getUInt("sleep_timeout", 120000);
-    _config.accelDisplayEnable = _prefs.getBool("accel_disp", false);
+    // _config.accelDisplayEnable = _prefs.getBool("accel_disp", false);  // 实时数值不保存，每次启动默认关闭
+    _config.accelDisplayEnable = false;  // 强制默认关闭
     
     // 模式启用状态
     _config.modePageEnable = _prefs.getBool("mode_page", true);
@@ -319,6 +323,7 @@ void WebConfig::saveConfig() {
     _prefs.putUChar("shake_act", _config.shakeAction);
     _prefs.putInt("shake_sens", _config.shakeSens);
     _prefs.putUInt("shake_min_dur", _config.shakeMinDurationMs);
+    _prefs.putUInt("shake_max_dur", _config.shakeMaxDurationMs);
     _prefs.putUInt("quiet_hold", _config.quietHoldMs);
     _prefs.putUInt("shake_cd", _config.shakeCooldownMs);
     // 各轴独立阈值模式
@@ -336,7 +341,7 @@ void WebConfig::saveConfig() {
     _prefs.putBool("dir_swap", _config.directionSwap);
     _prefs.putBool("page_disp", _config.pageDisplayEnable);
     _prefs.putUInt("sleep_timeout", _config.sleepTimeoutMs);
-    _prefs.putBool("accel_disp", _config.accelDisplayEnable);
+    // _prefs.putBool("accel_disp", _config.accelDisplayEnable);  // 实时数值不保存
     
     // 模式启用状态
     _prefs.putBool("mode_page", _config.modePageEnable);
@@ -422,6 +427,7 @@ void WebConfig::startWiFi() {
         _server = new WebServer(80);
         _server->on("/", std::bind(&WebConfig::handleRoot, this));
         _server->on("/save", std::bind(&WebConfig::handleSave, this));
+        _server->on("/reboot", std::bind(&WebConfig::handleReboot, this));
         _server->on("/keys", std::bind(&WebConfig::handleKeysPage, this));
         _server->on("/accel", std::bind(&WebConfig::handleAccel, this));
     }
@@ -486,7 +492,8 @@ String WebConfig::generateConfigPage() {
     html += "th{background-color:#f2f2f2;}\n";
     html += "</style>\n";
     html += "</head>\n<body>\n";
-    html += "<h2>AlphaPi 翻页器配置 <span style='font-size:14px;color:#666;font-weight:normal;'>固件版本 V1.0.3</span></h2>\n";
+    html += "<h2>AlphaPi 翻页器配置 <span style='font-size:14px;color:#666;font-weight:normal;'>固件版本 V1.0.4</span></h2>\n";
+    html += "<button type=\"button\" onclick=\"document.getElementById('configForm').submit()\" style=\"margin-bottom:15px;\">保存配置并重启</button><br>\n";
     
     // WiFi 信息
     html += "<div class=\"item\">\n";
@@ -495,7 +502,7 @@ String WebConfig::generateConfigPage() {
     html += "<p>AP IP: " + getAPIP() + "</p>\n";
     html += "</div>\n";
     
-    html += "<form method=\"POST\" action=\"/save\">\n";
+    html += "<form id=\"configForm\" method=\"POST\" action=\"/save\">\n";
     
     // WiFi STA 设置（用于 KOReader 模式）
     html += "<div class=\"item\">\n";
@@ -547,7 +554,8 @@ String WebConfig::generateConfigPage() {
     html += "X轴阈值(0=忽略此轴，200-30000，X轴差值超过此值算摇晃中，仅模式1有效):<input name=\"shake_th_x\" value=\"" + String(_config.shakeThresholdX) + "\"><br>\n";
     html += "Y轴阈值(0=忽略此轴，200-30000，Y轴差值超过此值算摇晃中，仅模式1有效):<input name=\"shake_th_y\" value=\"" + String(_config.shakeThresholdY) + "\"><br>\n";
     html += "Z轴阈值(0=忽略此轴，200-30000，Z轴差值超过此值算摇晃中，仅模式1有效):<input name=\"shake_th_z\" value=\"" + String(_config.shakeThresholdZ) + "\"><br>\n";
-    html += "最小摇晃时长ms(50-500，摇晃至少持续这么久才算有效摇晃):<input name=\"shake_min_dur\" value=\"" + String(_config.shakeMinDurationMs) + "\"><br>\n";
+    html += "最小摇晃时长ms(50-500，摇晃至少持续这么久才算有效摇晃):<input name=\"shake_min_dur\" value=\"" + String(_config.shakeMinDurationMs) + "\"><br>\n" +
+      "最大摇晃时长ms(200-5000，摇晃持续超过这么久就算误操作，不触发翻页):<input name=\"shake_max_dur\" value=\"" + String(_config.shakeMaxDurationMs) + "\"><br>\n";
     html += "静止时长ms(100-1000，摇晃结束后静止这么久才触发翻页):<input name=\"quiet_hold\" value=\"" + String(_config.quietHoldMs) + "\"><br>\n";
     html += "摇晃冷却时间ms(>=500，触发翻页后经过冷却时间才能再次触发):<input name=\"shake_cd\" value=\"" + String(_config.shakeCooldownMs) + "\"><br>\n";
     
@@ -1002,6 +1010,7 @@ void WebConfig::handleSave() {
     _config.shakeThresholdY = _server->arg("shake_th_y").toInt();
     _config.shakeThresholdZ = _server->arg("shake_th_z").toInt();
     _config.shakeMinDurationMs = _server->arg("shake_min_dur").toInt();
+    _config.shakeMaxDurationMs = _server->arg("shake_max_dur").toInt();
     _config.quietHoldMs = _server->arg("quiet_hold").toInt();
     _config.shakeCooldownMs = _server->arg("shake_cd").toInt();
     
@@ -1017,6 +1026,8 @@ void WebConfig::handleSave() {
     if (_config.shakeThresholdZ > 30000) _config.shakeThresholdZ = 30000;
     if (_config.shakeMinDurationMs < 50) _config.shakeMinDurationMs = 50;
     if (_config.shakeMinDurationMs > 500) _config.shakeMinDurationMs = 500;
+    if (_config.shakeMaxDurationMs < 200) _config.shakeMaxDurationMs = 200;
+    if (_config.shakeMaxDurationMs > 5000) _config.shakeMaxDurationMs = 5000;
     if (_config.quietHoldMs < 100) _config.quietHoldMs = 100;
     if (_config.quietHoldMs > 1000) _config.quietHoldMs = 1000;
     if (_config.shakeCooldownMs < 500) _config.shakeCooldownMs = 500;
@@ -1111,6 +1122,13 @@ void WebConfig::handleSave() {
     
     _server->send(200, "text/plain; charset=utf-8", "配置已保存，设备即将重启");
     delay(800);
+    ESP.restart();
+}
+
+void WebConfig::handleReboot() {
+    // 先发送响应，再重启
+    _server->send(200, "text/html; charset=utf-8", "<html><body><h2>正在重启...</h2><p>请等待设备重新启动。</p></body></html>");
+    delay(1000);
     ESP.restart();
 }
 

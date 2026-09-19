@@ -1,4 +1,4 @@
-#include <BLEHIDKeys.h>
+﻿#include <BLEHIDKeys.h>
 #include <BLEHIDMediaKeys.h>
 #include <HijelHID_BLEKeyboard.h>
 
@@ -33,6 +33,7 @@ SC7A20::SC7A20() {
     // 默认参数（参考 Python 版）
     _shakeThreshold = 3000;
     _shakeMinDurationMs = 100;
+    _shakeMaxDurationMs = 1000;  // 默认最大1秒，超过就算误操作
     _quietDurationMs = 300;
     _shakeCooldownMs = 1000;
     _shakeCoolTimer = 0;
@@ -283,7 +284,13 @@ bool SC7A20::checkShakeEvent() {
         case SHAKE_SHAKING:
             // 摇晃中
             if (isShaking) {
-                // 还在摇晃，持续累计
+                // 检查是否超过最大摇晃时长，超过就算误操作
+                uint32_t shakeDuration = now - _shakeStartMs;
+                if (shakeDuration >= _shakeMaxDurationMs) {
+                    // 摇晃时间太长，算误操作，进入无效摇晃状态
+                    _shakeState = SHAKE_INVALID;
+                    _quietStartMs = now;  // 开始计算静止时间
+                }
                 return false;
             } else {
                 // 摇晃减弱（total < shake_threshold），算摇晃结束
@@ -312,6 +319,18 @@ bool SC7A20::checkShakeEvent() {
                 }
             }
             return false;
+
+        case SHAKE_INVALID:
+            // 无效摇晃状态：不管有没有继续摇晃，都等到冷却时间到了才回到IDLE
+            // 这样连续摇晃超过最大时长后，停下来不会触发翻页
+            {
+                uint32_t invalidDuration = now - _quietStartMs;
+                if (invalidDuration >= _shakeCooldownMs) {
+                    // 冷却时间到了，回到IDLE，不触发翻页
+                    _shakeState = SHAKE_IDLE;
+                }
+            }
+            return false;
             
         default:
             _shakeState = SHAKE_IDLE;
@@ -329,6 +348,10 @@ void SC7A20::setShakeSens(int sens) {
 
 void SC7A20::setShakeMinDurationMs(uint32_t ms) {
     _shakeMinDurationMs = ms;
+}
+
+void SC7A20::setShakeMaxDurationMs(uint32_t ms) {
+    _shakeMaxDurationMs = ms;
 }
 
 void SC7A20::setQuietDurationMs(uint32_t ms) {

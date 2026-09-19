@@ -1,4 +1,4 @@
-/*
+﻿/*
  * AlphaPi_PageTurner.ino - AlphaPi 蓝牙翻页器（Arduino IDE 版本）
  * 
  * 硬件：
@@ -97,8 +97,11 @@ bool bleConnected = false;
 
 // 屏幕超时管理
 uint32_t screenOffDeadline = 0;  // 0 表示常亮，否则为自动熄灭的时间戳
+bool pendingApplyModeWireless = false;  // 待执行的模式切换（延迟到loop里执行，避免按键处理函数卡顿）
 
+uint32_t lastKRefreshTime = 0;  // 上次刷新K图标的时间
 // WiFi AP 管理
+uint32_t pendingApplyTime = 0;  // 待执行切换的开始时间（等K图标显示一会儿再执行）
 bool wifiAPEnabled = false;
 uint32_t apNoClientTimer = 0;  // AP 无设备连接计时
 const uint32_t AP_NO_CLIENT_TIMEOUT = 60000;  // STA模式下1分钟无设备连接自动关闭AP热点
@@ -234,70 +237,21 @@ void enterSleep() {
     // 重新初始化屏幕（UART 在轻量级睡眠中可能被关闭）
     display.begin();
     
-    // 重新初始化加速度计（I2C 在轻量级睡眠中可能被关闭）
-    accel.begin();
-    accel.setShakeSens(config->shakeSens);
-    accel.setShakeMinDurationMs(config->shakeMinDurationMs);
-    accel.setQuietHoldMs(config->quietHoldMs);
-    accel.setShakeCooldownMs(config->shakeCooldownMs);
-    accel.setShakeMode(config->shakeMode);
-    accel.setShakeThresholdXYZ(config->shakeThresholdX, config->shakeThresholdY, config->shakeThresholdZ);
+    // 初始化按键
+    buttons.begin();
     
-    // 恢复 WiFi（koreader 模式下）
-    if (config->currentMode == MODE_KOREADER) {
-        enableWiFi();
+    accelReady = accel.begin();
+    
+    if (accelReady) {
+        // 设置摇晃参数
+        accel.setShakeSens(3000);
+        accel.setShakeMinDurationMs(100);
+        accel.setQuietDurationMs(300);
+        accel.setShakeCooldownMs(1000);
     }
     
-    // 等待按键松开，避免立即触发操作
-    while (buttons.A.isDown() || buttons.B.isDown() || buttons.C.isDown()) {
-        buttons.update();
-        delay(10);
-    }
-    
-    // 如果休眠前在游戏模式，唤醒后重新进入游戏模式
-    if (wasInGameModeBeforeSleep) {
-        gameMode = true;
-        disableBLE();
-        disableWiFi();
-        screenOffDeadline = 0;  // 屏幕常亮
-        
-        // 检查当前游戏是否被关闭，如果是则切换到第一个启用的游戏
-        bool gameEnabled[8] = {
-            config->gameSnakeEnable, config->gameCatchEnable, config->gameDiceEnable,
-            config->gameStopwatchEnable, config->gameGomokuEnable, config->gameFlappyEnable,
-            config->gameRacingEnable, config->gameTetrisEnable
-        };
-        if (!gameEnabled[currentGame]) {
-            bool found = false;
-            for (int i = 0; i < 8; i++) {
-                if (gameEnabled[i]) {
-                    currentGame = i;
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                currentGame = 0;
-            }
-        }
-        
-        // 初始化当前游戏
-        switch (currentGame) {
-            case 0: snakeGame.begin(); break;
-            case 1: catchGame.begin(); break;
-            case 2: diceGame.begin(); break;
-            case 3: stopwatchGame.begin(); break;
-            case 4: gomokuGame.begin(); break;
-            case 5: flappyGame.begin(); break;
-            case 6: racingGame.begin(); break;
-            case 7: tetrisGame.begin(); break;
-        }
-        
-        Serial.println("Woke up in game mode");
-    } else {
-        // 显示当前模式图标 2 秒
-        showCurrentModeIcon(2000);
-    }
+    // 显示当前模式图标 2 秒
+    showCurrentModeIcon(2000);
     
     Serial.println("Exiting sleep mode (light sleep wakeup)");
 }
@@ -395,8 +349,16 @@ void applyModeWireless(uint8_t mode) {
 }
 
 // BLE 连接状态回调
+// BLE 连接状态回调
 void onBleConnection(bool connected) {
     bleConnected = connected;
+    DeviceConfig* config = webConfig.getConfig();
+    
+    // KO 模式下不显示 BLE 连接状态图标（因为我们主动关闭了 BLE）
+    if (config->currentMode == MODE_KOREADER) {
+        return;
+    }
+    
     if (connected) {
         // 连接成功：显示连接图标，2 秒后自动熄灭
         showIconWithTimeout("connected", 2000);
@@ -413,27 +375,20 @@ void setup() {
     
     // 初始化点阵显示
     display.begin();
-    
-    // 先显示等待图标
-    display.showIcon("waiting");
-    delay(500);
+    display.showIcon("clear");  // 清空屏幕，避免显示默认的P图标
     
     // 初始化按键
     buttons.begin();
     
     accelReady = accel.begin();
     
+    
     if (accelReady) {
         // 设置摇晃参数（按照 Python 版逻辑）
-        accel.setShakeSens(3000);              // 摇晃阈值（三轴差值之和超过此值算摇晃中）
-        accel.setShakeMinDurationMs(100);       // 最小摇晃时长（摇晃至少持续这么久才算有效摇晃）
-        accel.setQuietDurationMs(300);          // 静止时长（摇晃结束后静止这么久才触发翻页）
+        accel.setShakeSens(3000);              // 摇晃阈值
+        accel.setShakeMinDurationMs(100);       // 最小摇晃时长
+        accel.setQuietDurationMs(300);          // 静止时长
         accel.setShakeCooldownMs(1000);         // 冷却时间
-        
-        // 初始化成功：显示 media 图标（大加号，表示成功）
-        display.showIcon("media");
-        delay(1000);
-        display.showIcon("waiting");
     } else {
         // 初始化失败：显示叉号
         display.showIcon("shake_off");
@@ -452,6 +407,7 @@ void setup() {
     DeviceConfig* config = webConfig.getConfig();
     accel.setShakeSens(config->shakeSens);              // 摇晃阈值
     accel.setShakeMinDurationMs(config->shakeMinDurationMs); // 最小摇晃时长
+    accel.setShakeMaxDurationMs(config->shakeMaxDurationMs); // 最大摇晃时长
     accel.setQuietHoldMs(config->quietHoldMs);            // 静止时长（映射到 quietDurationMs）
     accel.setShakeCooldownMs(config->shakeCooldownMs);    // 冷却时间
     accel.setShakeMode(config->shakeMode);                 // 摇晃检测模式
@@ -768,7 +724,14 @@ void loop() {
         }
     }
     
-    // 检查屏幕自动熄灭
+    // 检查是否有待执行的模式切换
+    if (pendingApplyModeWireless) {
+        pendingApplyModeWireless = false;
+        DeviceConfig* config = webConfig.getConfig();
+        applyModeWireless(config->currentMode);
+        // 切换完成后再显示K图标（完全避免闪烁）
+        showCurrentModeIcon(2000);
+    }
     if (screenOffDeadline > 0 && millis() >= screenOffDeadline) {
         display.clear();
         screenOffDeadline = 0;
@@ -1059,14 +1022,16 @@ void loop() {
                     webConfig.setKOModeAP(false);
                 }
                 webConfig.saveConfig();
-                // 切换模式时同时切换 WiFi 和蓝牙状态
-                applyModeWireless(config->currentMode);
+                
+                // 先显示图标（快速响应）
                 // KO模式下根据AP模式显示不同图标
                 if (config->currentMode == MODE_KOREADER && webConfig.isKOModeAP()) {
-                    showIconWithTimeout("ko_ap", 2000);
+                    showIconWithTimeout("ko_ap", 0);  // 常亮，避免自动熄灭
                 } else {
-                    showCurrentModeIcon(2000);
                 }
+                
+                // 设置标志位，等loop里执行完切换后再显示K（完全避免闪烁）
+                pendingApplyModeWireless = true;
             }
         } else {
             // 有一个按键松开了，重置同时按下状态

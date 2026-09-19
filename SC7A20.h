@@ -1,4 +1,4 @@
-/*
+﻿/*
  * SC7A20.h - SC7A20 加速度计驱动与摇晃检测
  * 
  * 按照 Python 版的摇晃检测逻辑重构：
@@ -40,6 +40,7 @@ public:
     // 设置摇晃参数
     void setShakeSens(int sens);           // 摇晃阈值（三轴差值之和超过此值算摇晃中）
     void setShakeMinDurationMs(uint32_t ms); // 最小摇晃时长（摇晃至少持续这么久才算有效摇晃）
+    void setShakeMaxDurationMs(uint32_t ms); // 最大摇晃时长（摇晃持续超过这么久就算误操作，不触发翻页）
     void setQuietDurationMs(uint32_t ms);    // 静止时长（摇晃结束后静止这么久才触发翻页）
     void setShakeCooldownMs(uint32_t ms);    // 冷却时间
     
@@ -87,6 +88,7 @@ private:
     // 摇晃参数
     int _shakeThreshold;           // 摇晃阈值（模式0：三轴差值之和）
     uint32_t _shakeMinDurationMs;  // 最小摇晃时长
+    uint32_t _shakeMaxDurationMs;  // 最大摇晃时长（超过此值算误操作）
     uint32_t _quietDurationMs;     // 静止时长
     uint32_t _shakeCooldownMs;     // 冷却时间
     uint32_t _shakeCoolTimer;      // 冷却计时器
@@ -102,6 +104,7 @@ private:
         SHAKE_IDLE,
         SHAKE_SHAKING,
         SHAKE_WAIT_QUIET,
+        SHAKE_INVALID,  // 无效摇晃（超过最大时长），等待完全静止后才回到IDLE
     };
     ShakeState _shakeState;
     uint32_t _shakeStartMs;        // 摇晃开始时间
