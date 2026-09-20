@@ -23,6 +23,7 @@
 #define MODE_PLAY   4
 #define MODE_KOREADER 5
 #define MODE_CUSTOM 6
+#define MODE_AUTO 7   // 自动翻页模式
 
 // 按键动作定义
 #define ACTION_NONE             0
@@ -53,6 +54,9 @@ struct DeviceConfig {
     // 设备设置
     char deviceName[32];
     uint8_t currentMode;
+    // KO 模式返回目标（内部状态，持久化到 NVS 但不在 Web 页展示）
+    // 解决 KO 模式下重启（Web 保存重启/深度睡眠唤醒/断电）后丢失"进入 KO 前的模式"的问题
+    uint8_t lastNonKOMode;
     
     // 各模式键位配置（A短按、A长按、B短按、B长按、C短按、C长按）
     // 7个模式：0=page,1=arrow,2=media,3=music,4=play,5=koreader,6=custom
@@ -87,6 +91,13 @@ struct DeviceConfig {
     bool pageDisplayEnable;  // 翻页屏幕显示开关
     uint32_t sleepTimeoutMs;  // 休眠超时时间（毫秒），0=不休眠
     bool accelDisplayEnable;  // Web页实时加速度数值显示开关
+
+    // 射频发射功率设置
+    int8_t bleTxPower;   // 蓝牙发射功率 dBm（-12/-9/-6/-3/0/3/6/9），默认 -6
+    int8_t wifiTxPowerAP;   // WiFi 发射功率-KO AP子模式（0.25dBm 单位存储，8~78，20=5dBm）
+    int8_t wifiTxPowerSTA;  // WiFi 发射功率-KO STA子模式（0.25dBm 单位存储，8~78，60=15dBm）
+    uint8_t bleAdvMode;  // 蓝牙广播间隔：0=秒连(20-40ms，默认) 1=平衡(250ms) 2=省电(500ms)
+    uint8_t deepSleepEnable;  // 睡眠模式：0=轻度睡眠(默认) 1=深度睡眠(唤醒后重启+蓝牙重连，仅B/C键可唤醒)
     
     // 模式启用状态（true=启用，false=关闭，切换时跳过）
     bool modePageEnable;    // page 模式
@@ -95,6 +106,12 @@ struct DeviceConfig {
     bool modeMusicEnable;   // music 模式
     bool modePlayEnable;    // play 模式
     bool modeCustomEnable;  // custom 自定义模式
+    bool modeAutoEnable;    // auto 自动翻页模式
+
+    // 自动翻页模式设置
+    uint8_t autoTargetMode;      // 自动翻页执行的键位模式（0-6，不含koreader）
+    uint32_t autoIntervalMs;     // 自动翻页间隔（毫秒）
+    uint32_t autoRandomMs;       // 随机延时上限（毫秒），每次触发额外加 0~该值 的随机延时
     
     // 游戏启用状态（true=启用，false=关闭，切换时跳过）
     bool gameSnakeEnable;       // 贪吃蛇
@@ -162,6 +179,9 @@ public:
     
     // KOReader AP 模式（手机直接连接翻页器热点）
     void setKOModeAP(bool apMode);
+
+    // 按当前 KO 子模式（AP/STA）应用对应的 WiFi 发射功率，立即生效不需要重启
+    void applyWifiTxPower();
     bool isKOModeAP();
     static const char* KO_AP_SSID;
     static const char* KO_AP_IP;  // 手机连接后的IP

@@ -43,6 +43,7 @@ void WebConfig::setDefaultConfig() {
     // 设备设置
     strcpy(_config.deviceName, "AlphaPi Turner");
     _config.currentMode = MODE_PAGE;
+    _config.lastNonKOMode = MODE_PAGE;
     
     // 默认键位配置（和 Python 版一致）
     // PAGE 模式：B=PageDown（下一页），C=PageUp（上一页）
@@ -129,7 +130,12 @@ void WebConfig::setDefaultConfig() {
     _config.directionSwap = false;
     _config.pageDisplayEnable = true;  // 默认开启翻页屏幕显示
     _config.sleepTimeoutMs = 120000;  // 默认 2 分钟休眠
+    _config.deepSleepEnable = 0;      // 默认轻度睡眠
+    _config.bleAdvMode = 0;           // 默认秒连广播间隔（20-40ms）
     _config.accelDisplayEnable = false;  // 默认关闭实时加速度数值显示
+    _config.bleTxPower = -6;   // 蓝牙发射功率默认 -6dBm（近距离手持省电）
+    _config.wifiTxPowerAP = 20;   // KO AP 子模式默认 5dBm（手机直连热点，近距离省电）
+    _config.wifiTxPowerSTA = 60;  // KO STA 子模式默认 15dBm（连路由器需要余量）
     
     // 模式启用状态（默认全部启用）
     _config.modePageEnable = true;
@@ -138,6 +144,12 @@ void WebConfig::setDefaultConfig() {
     _config.modeMusicEnable = true;
     _config.modePlayEnable = true;
     _config.modeCustomEnable = true;
+    _config.modeAutoEnable = true;
+
+    // 自动翻页模式默认设置
+    _config.autoTargetMode = MODE_PAGE;  // 默认执行 page 模式的键位
+    _config.autoIntervalMs = 5000;       // 默认间隔5秒
+    _config.autoRandomMs = 0;            // 默认无随机延时
     
     // 游戏启用状态（默认全部启用）
     _config.gameSnakeEnable = true;
@@ -170,7 +182,14 @@ void WebConfig::loadConfig() {
         strncpy(_config.deviceName, name.c_str(), sizeof(_config.deviceName) - 1);
     }
     _config.currentMode = _prefs.getUChar("mode", MODE_PAGE);
-    
+    // 防止 NVS 垃圾值导致 keyActions/modeIcons 数组越界（合法范围 0-7，含 KO=5）
+    if (_config.currentMode > MODE_AUTO) _config.currentMode = MODE_PAGE;
+    // KO 模式返回目标（非法值兜底：越界或指向 KO 本身都回退 PAGE）
+    _config.lastNonKOMode = _prefs.getUChar("last_noko", MODE_PAGE);
+    if (_config.lastNonKOMode > MODE_AUTO || _config.lastNonKOMode == MODE_KOREADER) {
+        _config.lastNonKOMode = MODE_PAGE;
+    }
+
     // 键位配置（7个模式：0-6）
     for (int m = 0; m < 7; m++) {
         for (int k = 0; k < 6; k++) {
@@ -194,18 +213,18 @@ void WebConfig::loadConfig() {
     _config.customKeyCType[2] = _prefs.getUChar("ckc_type2", KEY_TYPE_KEYBOARD);
     
     // 摇晃检测参数（按照 Python 版逻辑）
-    _config.shakeEnable = _prefs.getBool("shake_en", true);
+    _config.shakeEnable = _prefs.getBool("shake_en", false);
     _config.shakeAction = _prefs.getUChar("shake_act", ACTION_PAGE_DOWN);
-    _config.shakeSens = _prefs.getInt("shake_sens", 3000);              // 摇晃阈值
+    _config.shakeSens = _prefs.getInt("shake_sens", 4000);              // 摇晃阈值
     _config.shakeMinDurationMs = _prefs.getUInt("shake_min_dur", 100);   // 最小摇晃时长
-    _config.shakeMaxDurationMs = _prefs.getUInt("shake_max_dur", 1000);   // 最大摇晃时长
+    _config.shakeMaxDurationMs = _prefs.getUInt("shake_max_dur", 800);   // 最大摇晃时长
     _config.quietHoldMs = _prefs.getUInt("quiet_hold", 300);             // 静止时长
-    _config.shakeCooldownMs = _prefs.getUInt("shake_cd", 1000);          // 冷却时间
+    _config.shakeCooldownMs = _prefs.getUInt("shake_cd", 800);          // 冷却时间
     // 各轴独立阈值模式
     _config.shakeMode = _prefs.getUChar("shake_mode", 0);                 // 0=三轴差值之和，1=各轴独立阈值
-    _config.shakeThresholdX = _prefs.getInt("shake_th_x", 1000);         // X轴阈值
-    _config.shakeThresholdY = _prefs.getInt("shake_th_y", 1000);         // Y轴阈值
-    _config.shakeThresholdZ = _prefs.getInt("shake_th_z", 1000);         // Z轴阈值
+    _config.shakeThresholdX = _prefs.getInt("shake_th_x", 0);            // X轴阈值（0=忽略）
+    _config.shakeThresholdY = _prefs.getInt("shake_th_y", 0);            // Y轴阈值（0=忽略）
+    _config.shakeThresholdZ = _prefs.getInt("shake_th_z", 2000);         // Z轴阈值
     // 以下参数已不再使用，保留兼容
     _config.shakeNeedCnt = _prefs.getUChar("shake_cnt", 4);
     _config.shakeWinMs = _prefs.getUInt("shake_win", 2000);
@@ -216,9 +235,21 @@ void WebConfig::loadConfig() {
     _config.directionSwap = _prefs.getBool("dir_swap", false);
     _config.pageDisplayEnable = _prefs.getBool("page_disp", true);
     _config.sleepTimeoutMs = _prefs.getUInt("sleep_timeout", 120000);
+    _config.deepSleepEnable = _prefs.getUChar("deep_sleep", 0);
+    if (_config.deepSleepEnable > 1) _config.deepSleepEnable = 0;
+    _config.bleAdvMode = _prefs.getUChar("ble_adv", 0);
+    if (_config.bleAdvMode > 2) _config.bleAdvMode = 0;
     // _config.accelDisplayEnable = _prefs.getBool("accel_disp", false);  // 实时数值不保存，每次启动默认关闭
     _config.accelDisplayEnable = false;  // 强制默认关闭
-    
+
+    // 无线发射功率
+    _config.bleTxPower = _prefs.getChar("ble_tx", -6);
+    if (_config.bleTxPower > 9 || _config.bleTxPower < -12) _config.bleTxPower = -6;
+    _config.wifiTxPowerAP = _prefs.getChar("wifi_tx_ap", 20);   // 0.25dBm 单位，20=5dBm
+    if (_config.wifiTxPowerAP < 8 || _config.wifiTxPowerAP > 78) _config.wifiTxPowerAP = 20;
+    _config.wifiTxPowerSTA = _prefs.getChar("wifi_tx_sta", 60); // 0.25dBm 单位，60=15dBm
+    if (_config.wifiTxPowerSTA < 8 || _config.wifiTxPowerSTA > 78) _config.wifiTxPowerSTA = 60;
+
     // 模式启用状态
     _config.modePageEnable = _prefs.getBool("mode_page", true);
     _config.modeArrowEnable = _prefs.getBool("mode_arrow", true);
@@ -226,6 +257,16 @@ void WebConfig::loadConfig() {
     _config.modeMusicEnable = _prefs.getBool("mode_music", true);
     _config.modePlayEnable = _prefs.getBool("mode_play", true);
     _config.modeCustomEnable = _prefs.getBool("mode_custom", true);
+    _config.modeAutoEnable = _prefs.getBool("mode_auto", true);
+
+    // 自动翻页模式设置
+    _config.autoTargetMode = _prefs.getUChar("auto_target", MODE_PAGE);
+    _config.autoIntervalMs = _prefs.getUInt("auto_interval", 5000);
+    _config.autoRandomMs = _prefs.getUInt("auto_random", 0);
+    // 目标模式只允许6种蓝牙键位模式（0-4,6），koreader和其他值回退为page
+    if (_config.autoTargetMode > MODE_CUSTOM || _config.autoTargetMode == MODE_KOREADER) {
+        _config.autoTargetMode = MODE_PAGE;
+    }
     
     // 游戏启用状态
     _config.gameSnakeEnable = _prefs.getBool("game_snake", true);
@@ -295,6 +336,7 @@ void WebConfig::saveConfig() {
     // 设备设置
     _prefs.putString("dev_name", _config.deviceName);
     _prefs.putUChar("mode", _config.currentMode);
+    _prefs.putUChar("last_noko", _config.lastNonKOMode);
     
     // 键位配置（7个模式：0-6）
     for (int m = 0; m < 7; m++) {
@@ -342,7 +384,14 @@ void WebConfig::saveConfig() {
     _prefs.putBool("page_disp", _config.pageDisplayEnable);
     _prefs.putUInt("sleep_timeout", _config.sleepTimeoutMs);
     // _prefs.putBool("accel_disp", _config.accelDisplayEnable);  // 实时数值不保存
-    
+
+    // 无线发射功率
+    _prefs.putChar("ble_tx", _config.bleTxPower);
+    _prefs.putChar("wifi_tx_ap", _config.wifiTxPowerAP);
+    _prefs.putChar("wifi_tx_sta", _config.wifiTxPowerSTA);
+    _prefs.putUChar("ble_adv", _config.bleAdvMode);
+    _prefs.putUChar("deep_sleep", _config.deepSleepEnable);
+
     // 模式启用状态
     _prefs.putBool("mode_page", _config.modePageEnable);
     _prefs.putBool("mode_arrow", _config.modeArrowEnable);
@@ -350,6 +399,12 @@ void WebConfig::saveConfig() {
     _prefs.putBool("mode_music", _config.modeMusicEnable);
     _prefs.putBool("mode_play", _config.modePlayEnable);
     _prefs.putBool("mode_custom", _config.modeCustomEnable);
+    _prefs.putBool("mode_auto", _config.modeAutoEnable);
+
+    // 自动翻页模式设置
+    _prefs.putUChar("auto_target", _config.autoTargetMode);
+    _prefs.putUInt("auto_interval", _config.autoIntervalMs);
+    _prefs.putUInt("auto_random", _config.autoRandomMs);
     
     // 游戏启用状态
     _prefs.putBool("game_snake", _config.gameSnakeEnable);
@@ -400,15 +455,19 @@ void WebConfig::loadConfigOnly() {
 
 void WebConfig::startWiFi() {
     // 初始化 WiFi
-    // 优化：设置WiFi睡眠模式为NONE，减少延迟，提高Web响应速度
-    // 这对STA模式尤其重要，避免WiFi睡眠导致TCP连接挂起
-    WiFi.setSleep(false);
+    // 省电：开启 WiFi modem sleep（STA 模式在 beacon 间隔期间降低射频功耗，可省 30-70mA）
+    // 代价是 HTTP 请求延迟增加几十毫秒，对翻页（每次一页一条请求）和 Web 配置页几乎无感
+    // 之前设为 false 是为了避免 TCP 挂起，实际 modem sleep 下配合 setAutoReconnect 已足够稳定
+    WiFi.setSleep(true);
     
     // 同时开启AP和STA模式
     // AP模式：手机直连192.168.4.1，稳定不卡死
     // STA模式：连接路由器，通过路由器IP访问，需要额外优化
     WiFi.mode(WIFI_AP_STA);
-    
+
+    // WiFi 发射功率按当前 KO 子模式应用（AP 子模式默认 5dBm / STA 子模式默认 15dBm）
+    applyWifiTxPower();
+
     IPAddress apIP(192, 168, 4, 1);
     IPAddress netMsk(255, 255, 255, 0);
     WiFi.softAPConfig(apIP, apIP, netMsk);
@@ -492,7 +551,7 @@ String WebConfig::generateConfigPage() {
     html += "th{background-color:#f2f2f2;}\n";
     html += "</style>\n";
     html += "</head>\n<body>\n";
-    html += "<h2>AlphaPi 翻页器配置 <span style='font-size:14px;color:#666;font-weight:normal;'>固件版本 V1.0.4</span></h2>\n";
+    html += "<h2>AlphaPi 翻页器配置 <span style='font-size:14px;color:#666;font-weight:normal;'>固件版本 V1.0.5</span></h2>\n";
     html += "<button type=\"button\" onclick=\"document.getElementById('configForm').submit()\" style=\"margin-bottom:15px;\">保存配置并重启</button><br>\n";
     
     // WiFi 信息
@@ -575,7 +634,45 @@ String WebConfig::generateConfigPage() {
     html += "<div class=\"item\">\n";
     html += "<h3>休眠设置</h3>\n";
     html += "休眠超时时间秒(>=30，无操作多久后进入休眠，0=不休眠):<input name=\"sleep_timeout\" value=\"" + String(_config.sleepTimeoutMs / 1000) + "\"><br>\n";
+    html += "睡眠模式:<select name=\"deep_sleep\">\n";
+    html += "<option value=\"0\"" + String(!_config.deepSleepEnable ? " selected" : "") + ">轻度睡眠(默认，按键唤醒秒回)</option>\n";
+    html += "<option value=\"1\"" + String(_config.deepSleepEnable ? " selected" : "") + ">深度睡眠(更省电，唤醒后重启+蓝牙重连3~5秒，仅B/C键可唤醒)</option>\n";
+    html += "</select><br>\n";
     html += "<p style=\"color:#666;font-size:13px;\">进入休眠前会闪烁2次X图标提示，单击A/B/C任意按键即可唤醒。AP有设备连接时不进入休眠。</p>\n";
+    html += "</div>\n";
+
+    // 无线功率设置
+    html += "<div class=\"item\">\n";
+    html += "<h3>无线功率设置</h3>\n";
+    {
+        static const int8_t bleLevels[] = {-12, -9, -6, -3, 0, 3, 6, 9};
+        html += "蓝牙发射功率dBm(近距离手持建议-6，连接不稳再调高，保存重启后生效):<select name=\"ble_tx\">\n";
+        for (uint8_t i = 0; i < sizeof(bleLevels); i++) {
+            int8_t lv = bleLevels[i];
+            html += "<option value=\"" + String(lv) + "\"" + String(_config.bleTxPower == lv ? " selected" : "") + ">" + String(lv) + "</option>\n";
+        }
+        html += "</select><br>\n";
+        static const int8_t wifiLevelsQ4[] = {78, 70, 60, 52, 44, 38, 28, 20, 14, 8};  // 0.25dBm单位：19.5/17/15/13/11/9.5/7/5/3.5/2
+        static const char* wifiLabels[] = {"19.5", "17", "15", "13", "11", "9.5", "7", "5", "3.5", "2"};
+        html += "WiFi发射功率dBm-KO STA子模式(连路由器，建议15以上):<select name=\"wifi_tx_sta\">\n";
+        for (uint8_t i = 0; i < sizeof(wifiLevelsQ4); i++) {
+            html += "<option value=\"" + String(wifiLevelsQ4[i]) + "\"" + String(_config.wifiTxPowerSTA == wifiLevelsQ4[i] ? " selected" : "") + ">" + String(wifiLabels[i]) + "</option>\n";
+        }
+        html += "</select><br>\n";
+        html += "WiFi发射功率dBm-KO AP子模式(手机直连热点，近距离建议5):<select name=\"wifi_tx_ap\">\n";
+        for (uint8_t i = 0; i < sizeof(wifiLevelsQ4); i++) {
+            html += "<option value=\"" + String(wifiLevelsQ4[i]) + "\"" + String(_config.wifiTxPowerAP == wifiLevelsQ4[i] ? " selected" : "") + ">" + String(wifiLabels[i]) + "</option>\n";
+        }
+        html += "</select><br>\n";
+        html += "<span style=\"color:#666;font-size:12px;\">KO模式下长按A切换AP/STA时功率自动跟随切换，立即生效无需重启</span><br>\n";
+        // 蓝牙广播间隔档位（影响未连接时的可发现速度和待机电流）
+        static const char* advLabels[] = {"秒连(20-40ms，手机几乎瞬间发现)", "平衡(250-300ms)", "省电(500-600ms，最多慢约1秒)"};
+        html += "蓝牙广播间隔(未连接时手机的发现速度，越慢越省电，保存重启后生效):<select name=\"ble_adv\">\n";
+        for (uint8_t i = 0; i < 3; i++) {
+            html += "<option value=\"" + String(i) + "\"" + String(_config.bleAdvMode == i ? " selected" : "") + ">" + String(advLabels[i]) + "</option>\n";
+        }
+        html += "</select><br>\n";
+    }
     html += "</div>\n";
     
     // 模式启用设置
@@ -605,6 +702,25 @@ String WebConfig::generateConfigPage() {
     html += "<option value=\"1\"" + String(_config.modeCustomEnable ? " selected" : "") + ">启用</option>\n";
     html += "<option value=\"0\"" + String(!_config.modeCustomEnable ? " selected" : "") + ">关闭</option>\n";
     html += "</select><br>\n";
+    html += "Auto自动翻页模式:<select name=\"mode_auto\">\n";
+    html += "<option value=\"1\"" + String(_config.modeAutoEnable ? " selected" : "") + ">启用</option>\n";
+    html += "<option value=\"0\"" + String(!_config.modeAutoEnable ? " selected" : "") + ">关闭</option>\n";
+    html += "</select><br>\n";
+    html += "</div>\n";
+
+    // 自动翻页设置
+    html += "<div class=\"item\">\n";
+    html += "<h3>自动翻页设置（Auto模式）</h3>\n";
+    html += "执行键位模式:<select name=\"auto_target\">\n";
+    const char* autoModes[] = {"page(PageUp/PageDown)", "arrow(方向键)", "media(音量加减)", "music(上下曲)", "play(播放控制)", "custom(自定义键值)"};
+    const uint8_t autoModeIds[] = {MODE_PAGE, MODE_ARROW, MODE_MEDIA, MODE_MUSIC, MODE_PLAY, MODE_CUSTOM};
+    for (int i = 0; i < 6; i++) {
+        html += "<option value=\"" + String(autoModeIds[i]) + "\"" + String(_config.autoTargetMode == autoModeIds[i] ? " selected" : "") + ">" + String(autoModes[i]) + "</option>\n";
+    }
+    html += "</select><br>\n";
+    html += "翻页间隔ms(500-3600000，每隔这段时间自动执行一次):<input name=\"auto_interval\" value=\"" + String(_config.autoIntervalMs) + "\"><br>\n";
+    html += "随机延时ms(0-600000，每次触发在间隔基础上额外加0~该值的随机延时，0=关闭):<input name=\"auto_random\" value=\"" + String(_config.autoRandomMs) + "\"><br>\n";
+    html += "<p style=\"color:#666;font-size:13px;\">使用方法：长按A切换到Auto模式后，短按B开始/停止自动执行所选模式的B键动作，短按C同理执行C键动作。长按C对调方向同样影响自动翻页，长按B开关摇晃不受影响。随机延时可用于模拟真人翻页节奏。</p>\n";
     html += "</div>\n";
     
     // 自定义模式键值设置
@@ -674,7 +790,8 @@ String WebConfig::generateConfigPage() {
     // 功能介绍（移到底部）
     html += "<div class=\"item\">\n";
     html += "<h3>功能介绍</h3>\n";
-    html += "<p><b>5 种蓝牙键位模式：</b>page（PageUp/Down）、arrow（方向键）、media（音量加减）、music（上下曲）、play（播放暂停/停止）</p>\n";
+    html += "<p><b>5 种蓝牙键位模式：</b>page（PageUp/Down）、arrow（方向键）、media（音量加减）、music（上下曲）、play（播放暂停/停止），另有 custom 自定义键值模式</p>\n";
+    html += "<p><b>Auto 自动翻页模式：</b>长按A切换到 Auto 模式，短按B开始/停止自动执行所选模式的B键动作，短按C同理。间隔和随机延时在「自动翻页设置」中配置</p>\n";
     html += "<p><b>KOReader 模式：</b>通过 WiFi HTTP 请求控制 KOReader 电子书阅读器，同时长按 A+B 切换。支持STA/AP双模式，长按A一键切换：</p>\n";
     html += "<ul>\n";
     html += "<li><b>STA模式</b>：连接路由器，手机和翻页器在同一局域网</li>\n";
@@ -1034,6 +1151,7 @@ void WebConfig::handleSave() {
     
     // 休眠超时时间（秒转毫秒，最低30秒，0=不休眠）
     uint32_t sleepSec = _server->arg("sleep_timeout").toInt();
+    if (sleepSec > 86400UL) sleepSec = 86400UL;  // 上限1天，防止秒转毫秒时 uint32 溢出
     if (sleepSec == 0) {
         _config.sleepTimeoutMs = 0;  // 不休眠
     } else if (sleepSec < 30) {
@@ -1041,6 +1159,25 @@ void WebConfig::handleSave() {
     } else {
         _config.sleepTimeoutMs = sleepSec * 1000;
     }
+
+    // 无线发射功率
+    int bleTx = _server->arg("ble_tx").toInt();
+    if (bleTx > 9) bleTx = 9;
+    if (bleTx < -12) bleTx = -12;
+    _config.bleTxPower = bleTx;
+    int wifiTxAp = _server->arg("wifi_tx_ap").toInt();
+    if (wifiTxAp > 78) wifiTxAp = 78;
+    if (wifiTxAp < 8) wifiTxAp = 8;
+    _config.wifiTxPowerAP = wifiTxAp;
+    int wifiTxSta = _server->arg("wifi_tx_sta").toInt();
+    if (wifiTxSta > 78) wifiTxSta = 78;
+    if (wifiTxSta < 8) wifiTxSta = 8;
+    _config.wifiTxPowerSTA = wifiTxSta;
+    int advMode = _server->arg("ble_adv").toInt();
+    if (advMode < 0) advMode = 0;
+    if (advMode > 2) advMode = 2;
+    _config.bleAdvMode = advMode;
+    _config.deepSleepEnable = _server->arg("deep_sleep").toInt() == 1 ? 1 : 0;
     
     // 加速度实时数值显示开关
     _config.accelDisplayEnable = _server->arg("accel_disp").toInt() == 1;
@@ -1052,6 +1189,19 @@ void WebConfig::handleSave() {
     _config.modeMusicEnable = _server->arg("mode_music").toInt() == 1;
     _config.modePlayEnable = _server->arg("mode_play").toInt() == 1;
     _config.modeCustomEnable = _server->arg("mode_custom").toInt() == 1;
+    _config.modeAutoEnable = _server->arg("mode_auto").toInt() == 1;
+
+    // 自动翻页设置
+    int autoTarget = _server->arg("auto_target").toInt();
+    if (autoTarget > MODE_CUSTOM || autoTarget < 0 || autoTarget == MODE_KOREADER) {
+        autoTarget = MODE_PAGE;
+    }
+    _config.autoTargetMode = (uint8_t)autoTarget;
+    _config.autoIntervalMs = _server->arg("auto_interval").toInt();
+    if (_config.autoIntervalMs < 500) _config.autoIntervalMs = 500;
+    if (_config.autoIntervalMs > 3600000UL) _config.autoIntervalMs = 3600000UL;
+    _config.autoRandomMs = _server->arg("auto_random").toInt();
+    if (_config.autoRandomMs > 600000UL) _config.autoRandomMs = 600000UL;
     
     // 自定义模式组合键（每个按键3个键值+类型）
     for (int i = 0; i < 3; i++) {
@@ -1202,14 +1352,25 @@ bool WebConfig::isSTAConnected() {
 void WebConfig::setKOModeAP(bool apMode) {
     if (_koAPMode == apMode) return;
     _koAPMode = apMode;
-    
+
     // AP模式只是改变HTTP命令的目标IP，不需要重新配置WiFi
     // WiFi一直保持AP+STA模式，热点"AlphaPi-Config"始终存在
+    // 切换子模式时同步切换发射功率（AP 近距离 5dBm / STA 连路由器 15dBm），立即生效
+    applyWifiTxPower();
     if (apMode) {
         Serial.println("KO mode: AP mode (target IP = 192.168.4.2)");
     } else {
         Serial.println("KO mode: STA mode (target IP = configured IP)");
     }
+}
+
+void WebConfig::applyWifiTxPower() {
+    // WiFi 未启动时跳过（启动时会由 startWiFi 再次应用）
+    if (WiFi.getMode() == WIFI_OFF) return;
+    int8_t q4 = _koAPMode ? _config.wifiTxPowerAP : _config.wifiTxPowerSTA;
+    WiFi.setTxPower((wifi_power_t)q4);
+    Serial.printf("WiFi TX power applied: %d x 0.25dBm = %.2f dBm (%s mode)\n",
+                  q4, q4 / 4.0, _koAPMode ? "AP" : "STA");
 }
 
 bool WebConfig::isKOModeAP() {

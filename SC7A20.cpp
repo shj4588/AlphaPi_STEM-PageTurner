@@ -19,6 +19,7 @@
 SC7A20::SC7A20() {
     _initialized = false;
     _disabled = false;
+    _poweredDown = false;
     _readFailCount = 0;
     
     _lastX = 0;
@@ -30,19 +31,19 @@ SC7A20::SC7A20() {
     
     _lastReadTs = 0;
     
-    // 默认参数（参考 Python 版）
-    _shakeThreshold = 3000;
+    // 默认参数（2026-09 实测标定值，实际以 WebConfig 配置为准）
+    _shakeThreshold = 4000;
     _shakeMinDurationMs = 100;
-    _shakeMaxDurationMs = 1000;  // 默认最大1秒，超过就算误操作
+    _shakeMaxDurationMs = 800;   // 超过就算误操作
     _quietDurationMs = 300;
-    _shakeCooldownMs = 1000;
+    _shakeCooldownMs = 800;
     _shakeCoolTimer = 0;
     
     // 各轴独立阈值模式默认参数
     _shakeMode = 0;  // 默认使用原模式（三轴差值之和）
-    _shakeThresholdX = 1000;
-    _shakeThresholdY = 1000;
-    _shakeThresholdZ = 1000;
+    _shakeThresholdX = 0;
+    _shakeThresholdY = 0;
+    _shakeThresholdZ = 2000;
     
     _shakeState = SHAKE_IDLE;
     _shakeStartMs = 0;
@@ -143,14 +144,11 @@ bool SC7A20::begin() {
     }
     
     // 配置 SC7A20：写入寄存器 0x20，值 0x57（100Hz ±2g）
-    Wire.beginTransmission(I2C_ADDR);
-    Wire.write(REG_CTRL1);
-    Wire.write(0x57);
-    error = Wire.endTransmission();
-    if (error != 0) {
+    if (!writeReg(REG_CTRL1, CTRL1_ACTIVE)) {
         Serial.println("SC7A20: init failed");
         return false;
     }
+    _poweredDown = false;
     
     // 等待传感器启动
     delay(50);
@@ -184,8 +182,58 @@ bool SC7A20::begin() {
     return true;
 }
 
+// ===== 电源管理 =====
+
+bool SC7A20::writeReg(uint8_t reg, uint8_t val) {
+    Wire.beginTransmission(I2C_ADDR);
+    Wire.write(reg);
+    Wire.write(val);
+    return Wire.endTransmission() == 0;
+}
+
+// 进入掉电模式：停止 100Hz 采样，静态电流降到 µA 以下
+void SC7A20::powerDown() {
+    if (!_initialized || _poweredDown) return;
+    if (!writeReg(REG_CTRL1, CTRL1_POWERDOWN)) {
+        Serial.println("SC7A20: powerDown failed");
+        return;
+    }
+    _poweredDown = true;
+    Serial.println("SC7A20: power-down (shake disabled)");
+}
+
+// 恢复采样：重新建基线并给一段冷却，避免恢复瞬间被误判成摇晃
+void SC7A20::wakeUp() {
+    if (!_initialized || !_poweredDown) return;
+    if (!writeReg(REG_CTRL1, CTRL1_ACTIVE)) {
+        Serial.println("SC7A20: wakeUp failed");
+        return;
+    }
+    _poweredDown = false;
+    delay(10);  // 等待传感器启动
+    
+    // 重建基线
+    readRawMedian(_lastX, _lastY, _lastZ);
+    _lastValidX = _lastX;
+    _lastValidY = _lastY;
+    _lastValidZ = _lastZ;
+    _readFailCount = 0;
+    _lastReadTs = millis();      // 抑制本周期立即读取
+    _shakeState = SHAKE_IDLE;
+    _shakeCoolTimer = millis();  // 唤醒后按冷却时间静默，防止误触发
+    Serial.println("SC7A20: wake-up (shake enabled)");
+}
+
+void SC7A20::setPowerEnabled(bool on) {
+    if (on) {
+        wakeUp();
+    } else {
+        powerDown();
+    }
+}
+
 void SC7A20::readRaw(int16_t &x, int16_t &y, int16_t &z) {
-    if (!_initialized || _disabled) {
+    if (!_initialized || _disabled || _poweredDown) {
         x = _lastValidX;
         y = _lastValidY;
         z = _lastValidZ;
@@ -211,7 +259,7 @@ void SC7A20::readRaw(int16_t &x, int16_t &y, int16_t &z) {
 }
 
 bool SC7A20::checkShakeEvent() {
-    if (!_shakeEnable || !_initialized || _disabled) {
+    if (!_shakeEnable || !_initialized || _disabled || _poweredDown) {
         return false;
     }
     
@@ -221,7 +269,7 @@ bool SC7A20::checkShakeEvent() {
     }
     
     // 限制最小读取间隔：主循环太快，相邻两次读取差值太小
-    // 保证至少 20ms 才真正读取一次，这样加速度变化量足够大
+    // 保证至少 40ms 才真正读取一次，这样加速度变化量足够大
     uint32_t now = millis();
     if (_lastReadTs > 0 && (now - _lastReadTs < MIN_READ_INTERVAL_MS)) {
         return false;

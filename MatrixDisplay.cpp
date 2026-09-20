@@ -153,6 +153,15 @@ const uint8_t ICON_LETTER_C[25] = {
     0,1,1,0,0
 };
 
+// 自动翻页模式图标：字母A（Auto）
+const uint8_t ICON_AUTO[25] = {
+    1,1,1,0,0,
+    1,0,1,0,0,
+    1,1,1,0,0,
+    1,0,1,0,0,
+    1,0,1,0,0
+};
+
 const uint8_t ICON_VOLUME_UP[25] = {
     0,0,0,0,0,
     0,0,1,0,0,
@@ -203,12 +212,36 @@ const uint8_t ICON_CLEAR[25] = {
 
 MatrixDisplay::MatrixDisplay() {
     _uart = nullptr;
+    _failStreak = 0;
+    _offline = false;
+    _offlineSince = 0;
 }
 
 void MatrixDisplay::begin() {
-    _uart = new HardwareSerial(1);
+    // 复用已有对象：休眠唤醒会重复调用 begin()，每次 new 会泄漏一个 HardwareSerial
+    if (!_uart) {
+        _uart = new HardwareSerial(1);
+    }
     _uart->begin(BAUDRATE, SERIAL_8N1, RX_PIN, TX_PIN);
     delay(100);
+    
+    // 复位熔断状态
+    _failStreak = 0;
+    _offline = false;
+    _offlineSince = 0;
+}
+
+// 关闭 UART：TX 保持输出 UART 空闲电平（高），RX 上拉保持确定电平
+// 注意：TX 不能设为悬空高阻——协控 RX 浮空会收到噪声，可能被解析成乱码帧
+// 导致 LED 处于半亮的杂散状态（休眠时屏幕微微发光）；保持空闲高电平与
+// UART 正常工作时的静态一致，唤醒后必须重新调用 begin()
+void MatrixDisplay::end() {
+    if (!_uart) return;
+    _uart->end();
+    delay(10);                          // 等最后一帧发完
+    pinMode(TX_PIN, OUTPUT);
+    digitalWrite(TX_PIN, HIGH);         // UART 空闲电平，电平确定且无噪声
+    pinMode(RX_PIN, INPUT_PULLUP);      // 保持确定电平，避免悬空噪声
 }
 
 uint8_t MatrixDisplay::calcChecksum(const uint8_t* buf, uint8_t len) {
@@ -220,7 +253,16 @@ uint8_t MatrixDisplay::calcChecksum(const uint8_t* buf, uint8_t len) {
 }
 
 bool MatrixDisplay::uartWrite(uint8_t addr, const uint8_t* data, uint8_t dataLen) {
-    if (dataLen == 0) return false;
+    if (dataLen == 0 || !_uart) return false;
+    
+    // 熔断：协控芯片连续无响应时暂停发送
+    // 否则每次显示都要走满 10 次重试，单次最坏阻塞约 1.6 秒，会把按键整段吞掉
+    if (_offline) {
+        if (millis() - _offlineSince < OFFLINE_RETRY_MS) {
+            return false;               // 熔断期内零开销直接返回
+        }
+        _failStreak = 0;                // 到探测时间，放行一次
+    }
     
     // 构建帧：[0x90, addr, len(data), data..., checksum]
     uint8_t buf[32];
@@ -244,11 +286,21 @@ bool MatrixDisplay::uartWrite(uint8_t addr, const uint8_t* data, uint8_t dataLen
     if (_uart->available() >= 3) {
         uint8_t resp[3];
         _uart->readBytes(resp, 3);
+        // 有响应说明协控芯片存活，无论状态码如何都清零失败计数
+        _failStreak = 0;
+        _offline = false;
         return resp[2] == 0x05; // 第 3 字节 = 0x05 表示成功
     }
     
-    // 没有响应，重发一个 0 字节
+    // 没有响应，重发一个 0 字节帮助对端重新同步
     _uart->write((uint8_t)0);
+    _failStreak++;
+    if (_failStreak >= MAX_FAIL_STREAK) {
+        _offline = true;
+        _offlineSince = millis();
+        Serial.println("MatrixDisplay: controller not responding, display suspended");
+        return false;   // 熔断后不再阻塞等待
+    }
     delay(150);
     return false;
 }
@@ -299,6 +351,9 @@ void MatrixDisplay::showPattern(const uint8_t pattern[25]) {
         if (uartWrite(DEFAULT_ADDR, bytes, 5)) {
             return;
         }
+        if (_offline) {
+            return;  // 已熔断，立即放弃重试，避免长时间阻塞
+        }
         delay(10);
     }
 }
@@ -310,6 +365,9 @@ void MatrixDisplay::showPattern(const char* rows[5]) {
     for (uint8_t retry = 0; retry < 10; retry++) {
         if (uartWrite(DEFAULT_ADDR, bytes, 5)) {
             return;
+        }
+        if (_offline) {
+            return;  // 已熔断，立即放弃重试，避免长时间阻塞
         }
         delay(10);
     }
@@ -336,6 +394,7 @@ void MatrixDisplay::showIcon(const char* iconName) {
     else if (strcmp(iconName, "koreader") == 0) showPattern(ICON_KOREADER);
     else if (strcmp(iconName, "ko_ap") == 0) showPattern(ICON_KO_AP);
     else if (strcmp(iconName, "custom") == 0) showPattern(ICON_CUSTOM);
+    else if (strcmp(iconName, "auto") == 0) showPattern(ICON_AUTO);
     else if (strcmp(iconName, "volume_up") == 0) showPattern(ICON_VOLUME_UP);
     else if (strcmp(iconName, "volume_down") == 0) showPattern(ICON_VOLUME_DOWN);
     else if (strcmp(iconName, "shake_on") == 0) showPattern(ICON_SHAKE_ON);

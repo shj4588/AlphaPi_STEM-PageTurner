@@ -25,7 +25,7 @@
 // KEY_PAGE_UP, KEY_PAGE_DOWN, KEY_RIGHT_ARROW, KEY_LEFT_ARROW, KEY_UP_ARROW, KEY_DOWN_ARROW 等
 
 // 媒体键码（使用库中定义的键码）
-// MEDIA_NEXT_TRACK, MEDIA_PREV_TRACK, MEDIA_STOP, MEDIA_PLAY_PAUSE, 
+// MEDIA_NEXT_TRACK, MEDIA_PREV_TRACK, MEDIA_STOP, MEDIA_PLAY_PAUSE,
 // MEDIA_MUTE, MEDIA_VOLUME_UP, MEDIA_VOLUME_DOWN 等
 
 class BleHid {
@@ -34,6 +34,13 @@ public:
     
     // 初始化 BLE HID
     void begin(const char* deviceName = "AlphaPi Turner");
+
+    // 设置蓝牙发射功率（dBm，支持 -12/-9/-6/-3/0/3/6/9，须在 begin() 之后调用）
+    void setTxPower(int8_t dbm);
+
+    // 设置广播间隔档位（0=秒连20-40ms默认 1=平衡250ms 2=省电500ms，须在 begin() 之后调用）
+    // 未连接待机时广播是射频耗电大头，拉长间隔可大幅省电，代价是手机重连稍慢
+    void applyAdvInterval(uint8_t mode);
     
     // 停止 BLE HID
     void end();

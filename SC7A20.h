@@ -54,7 +54,24 @@ public:
     void setQuietHoldMs(uint32_t ms);      // 映射到 setQuietDurationMs
     void setShakeNeedCnt(uint8_t cnt);     // 不再使用，保留兼容
     
+    // ===== 电源管理 =====
+    // 摇晃功能关闭时把传感器写入掉电模式，省掉 100Hz 采样的静态电流
+    // 注意：掉电期间 readRaw() 返回最后一次有效值，摇晃检测不工作
+    // 摇色子等游戏依赖加速度计，进入游戏前必须 wakeUp()
+    void powerDown();
+    void wakeUp();
+    void setPowerEnabled(bool on);        // on=true 恢复采样，on=false 掉电
+    bool isPoweredDown() { return _poweredDown; }
+    
 private:
+    // 写入单字节寄存器
+    bool writeReg(uint8_t reg, uint8_t val);
+    
+    // 掉电状态
+    bool _poweredDown;
+    static const uint8_t CTRL1_ACTIVE = 0x57;       // 100Hz + 正常模式 + 三轴使能
+    static const uint8_t CTRL1_POWERDOWN = 0x00;    // 掉电
+
     // I2C 地址
     static const uint8_t I2C_ADDR = 0x18;
     static const uint8_t REG_CTRL1 = 0x20;
@@ -70,8 +87,8 @@ private:
     // 读取失败处理
     static const uint8_t MAX_READ_FAILS = 20;
     
-    // 最小读取间隔（ms）
-    static const uint32_t MIN_READ_INTERVAL_MS = 20;
+    // 最小读取间隔（ms）：40ms 降频省电，摇晃响应慢 20ms 基本无感
+    static const uint32_t MIN_READ_INTERVAL_MS = 40;
     
     // 初始化状态
     bool _initialized;

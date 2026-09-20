@@ -38,6 +38,13 @@ public:
     // 显示预定义图标
     void showIcon(const char* iconName);
     
+    // 关闭 UART 并把引脚设为高阻（休眠时消除对协控 RX 的灌电流）
+    // 唤醒后必须重新调用 begin()
+    void end();
+    
+    // 协控芯片是否已被判定为无响应（熔断状态）
+    bool isOffline() { return _offline; }
+    
 private:
     HardwareSerial* _uart;
     static const uint8_t FRAME_HEADER = 0x90;
@@ -45,6 +52,13 @@ private:
     static const uint32_t BAUDRATE = 460929;
     static const uint8_t TX_PIN = 8;
     static const uint8_t RX_PIN = 9;
+    
+    // 失败熔断：连续失败达到阈值后暂停发送，避免 10 次重试造成长时间阻塞
+    uint8_t _failStreak;              // 连续失败次数
+    bool _offline;                    // 已熔断
+    uint32_t _offlineSince;           // 熔断起始时刻
+    static const uint8_t MAX_FAIL_STREAK = 3;       // 连续失败多少次后熔断
+    static const uint32_t OFFLINE_RETRY_MS = 30000; // 熔断后每 30 秒放行一次探测
     
     // 计算校验和
     uint8_t calcChecksum(const uint8_t* buf, uint8_t len);
@@ -81,5 +95,6 @@ extern const uint8_t ICON_DIRECTION_SWAP[25]; // 圆圈
 extern const uint8_t ICON_CLEAR[25];       // 全灭
 extern const uint8_t ICON_LETTER_B[25];    // 字母B（自定义键值模式B键）
 extern const uint8_t ICON_LETTER_C[25];    // 字母C（自定义键值模式C键）
+extern const uint8_t ICON_AUTO[25];        // 字母A（自动翻页模式）
 
 #endif // MATRIX_DISPLAY_H

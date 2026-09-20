@@ -110,22 +110,97 @@ const uint32_t AP_NO_CLIENT_TIMEOUT = 60000;  // STA模式下1分钟无设备连
 bool bleEnabled = false;
 
 // 上一个非 koreader 模式（用于从 koreader 模式返回）
-uint8_t lastNonKoreaderMode = MODE_PAGE;
+// 已持久化到 NVS（config->lastNonKOMode），KO 模式下重启也能正确恢复
+
+// ========== 自动翻页模式状态 ==========
+bool autoRunningB = false;     // B键自动翻页执行中
+bool autoRunningC = false;     // C键自动翻页执行中
+uint32_t autoNextBTime = 0;    // B键下次触发时间
+uint32_t autoNextCTime = 0;    // C键下次触发时间
+
+// 停止自动翻页（切换模式/进入游戏/休眠时调用）
+void stopAutoPage() {
+    autoRunningB = false;
+    autoRunningC = false;
+}
+
+// 计算下次自动翻页延时（间隔 + 随机延时0~autoRandomMs）
+uint32_t autoNextDelay() {
+    DeviceConfig* config = webConfig.getConfig();
+    uint32_t d = config->autoIntervalMs;
+    if (config->autoRandomMs > 0) {
+        d += random(config->autoRandomMs + 1);
+    }
+    return d;
+}
+
+// 执行自动翻页动作（模拟所选模式的B/C键操作）
+void performAutoAction(bool isB) {
+    DeviceConfig* config = webConfig.getConfig();
+    bool isNext = isB ? !config->directionSwap : config->directionSwap;
+
+    switch (config->autoTargetMode) {
+        case MODE_PAGE:
+            bleHid.sendKey(isNext ? KEY_PAGE_DOWN : KEY_PAGE_UP);
+            break;
+        case MODE_ARROW:
+            bleHid.sendKey(isNext ? KEY_RIGHT : KEY_LEFT);
+            break;
+        case MODE_MEDIA:
+            bleHid.sendMedia(isNext ? MEDIA_VOLUME_UP : MEDIA_VOLUME_DOWN);
+            break;
+        case MODE_MUSIC:
+            bleHid.sendMedia(isNext ? MEDIA_NEXT_TRACK : MEDIA_PREV_TRACK);
+            break;
+        case MODE_PLAY:
+            // play模式：B=停止，C=播放暂停
+            if (isB) {
+                bleHid.sendMedia(MEDIA_STOP);
+            } else {
+                bleHid.sendMedia(MEDIA_PLAY_PAUSE);
+            }
+            break;
+        case MODE_CUSTOM:
+            // 自定义模式：发送对应的自定义组合键
+            if (isB) {
+                bleHid.sendCombination(config->customKeyB, config->customKeyBType);
+            } else {
+                bleHid.sendCombination(config->customKeyC, config->customKeyCType);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+// 自动翻页触发时的显示图标（返回nullptr表示需要用showPattern显示字母）
+const char* autoActionIcon(bool isB) {
+    DeviceConfig* config = webConfig.getConfig();
+    bool isNext = isB ? !config->directionSwap : config->directionSwap;
+    if (config->autoTargetMode == MODE_MEDIA) {
+        return isNext ? "volume_up" : "volume_down";
+    }
+    if (config->autoTargetMode == MODE_PLAY) {
+        return isB ? "stop" : "play_pause";
+    }
+    return isNext ? "arrow_right" : "arrow_left";
+}
 
 // 获取下一个启用的蓝牙模式（跳过关闭的模式和KO模式）
 uint8_t getNextEnabledMode(uint8_t currentMode) {
     DeviceConfig* config = webConfig.getConfig();
     // 蓝牙模式列表（注意：跳过MODE_KOREADER=5）
-    const uint8_t btModes[] = {MODE_PAGE, MODE_ARROW, MODE_MEDIA, MODE_MUSIC, MODE_PLAY, MODE_CUSTOM};
+    const uint8_t btModes[] = {MODE_PAGE, MODE_ARROW, MODE_MEDIA, MODE_MUSIC, MODE_PLAY, MODE_CUSTOM, MODE_AUTO};
     const bool modeEnabled[] = {
         config->modePageEnable,
         config->modeArrowEnable,
         config->modeMediaEnable,
         config->modeMusicEnable,
         config->modePlayEnable,
-        config->modeCustomEnable
+        config->modeCustomEnable,
+        config->modeAutoEnable
     };
-    const int BT_MODE_COUNT = 6;
+    const int BT_MODE_COUNT = 7;
     
     // 找到当前模式在btModes中的索引
     int currentIndex = -1;
@@ -167,10 +242,22 @@ void updateActivity() {
     lastActivityTime = millis();
 }
 
+// 按摇晃开关同步加速度计电源状态
+// 关闭摇晃时让传感器进掉电模式，省掉 100Hz 采样的静态电流
+// 注意：摇色子游戏依赖加速度计，游戏模式进出时要单独处理
+void applyAccelPowerState() {
+    if (!accelReady) return;
+    DeviceConfig* config = webConfig.getConfig();
+    accel.setPowerEnabled(config->shakeEnable);
+}
+
 // 进入休眠
 void enterSleep() {
     if (isSleeping) return;
-    
+
+    // 停止自动翻页
+    stopAutoPage();
+
     // 进入休眠前闪烁2次 X 图标
     for (int i = 0; i < 2; i++) {
         display.showIcon("shake_off");  // X 图标
@@ -201,6 +288,26 @@ void enterSleep() {
         wifiAPEnabled = false;
     }
     
+    // 加速度计掉电（休眠期间不检测摇晃）
+    if (accelReady) {
+        accel.powerDown();
+    }
+    
+    // 关闭 UART：TX 保持 UART 空闲高电平，避免协控 RX 浮空收噪声
+    display.end();
+
+    DeviceConfig* sleepConfig = webConfig.getConfig();
+
+    // 深度睡眠模式：电流从约 130µA 降到约 10µA，长时间闲置收益明显
+    // 代价：唤醒后整机重启、蓝牙需重连（3~5 秒）；C3 深睡仅 RTC GPIO(0-5)
+    // 可唤醒，B=GPIO1、C=GPIO3（A=GPIO10 不支持深睡唤醒，A 键无效）
+    if (sleepConfig->deepSleepEnable) {
+        esp_deep_sleep_enable_gpio_wakeup((1ULL << 1) | (1ULL << 3), ESP_GPIO_WAKEUP_GPIO_HIGH);
+        Serial.println("Entering deep sleep (wake on B/C key press)");
+        Serial.flush();
+        esp_deep_sleep_start();  // 不返回；唤醒后从 setup() 重新启动
+    }
+
     Serial.println("Entering light sleep mode");
     
     // 配置 GPIO 唤醒（按键是下拉输入，按下高电平，所以用高电平触发）
@@ -232,6 +339,10 @@ void enterSleep() {
     if (config->currentMode != MODE_KOREADER) {
         enableBLE();
         delay(100);  // 等待 BLE 初始化
+    } else {
+        // KO 模式唤醒后恢复 WiFi（休眠前已被关闭，否则 KOReader 请求会全部失败）
+        enableWiFi();
+        delay(100);
     }
     
     // 重新初始化屏幕（UART 在轻量级睡眠中可能被关闭）
@@ -243,11 +354,17 @@ void enterSleep() {
     accelReady = accel.begin();
     
     if (accelReady) {
-        // 设置摇晃参数
-        accel.setShakeSens(3000);
-        accel.setShakeMinDurationMs(100);
-        accel.setQuietDurationMs(300);
-        accel.setShakeCooldownMs(1000);
+        // 从配置重新加载摇晃参数（原先写死默认值，用户改过的参数唤醒后会丢失）
+        accel.setShakeSens(config->shakeSens);
+        accel.setShakeMinDurationMs(config->shakeMinDurationMs);
+        accel.setShakeMaxDurationMs(config->shakeMaxDurationMs);
+        accel.setQuietHoldMs(config->quietHoldMs);
+        accel.setShakeCooldownMs(config->shakeCooldownMs);
+        accel.setShakeMode(config->shakeMode);
+        accel.setShakeThresholdXYZ(config->shakeThresholdX, config->shakeThresholdY, config->shakeThresholdZ);
+        
+        // begin() 已把传感器拉回 100Hz，这里按摇晃开关决定是否重新掉电
+        applyAccelPowerState();
     }
     
     // 显示当前模式图标 2 秒
@@ -266,13 +383,58 @@ void showIconWithTimeout(const char* iconName, uint32_t durationMs) {
     }
 }
 
+// 启动/停止自动翻页（isB：操作B键还是C键）
+// 已在执行 → 停止；未执行 → 停掉另一路，立即执行一次动作，之后按间隔自动执行
+void toggleAutoPage(bool isB) {
+    DeviceConfig* config = webConfig.getConfig();
+
+    if ((isB ? autoRunningB : autoRunningC)) {
+        // 当前按键已在自动执行 → 停止
+        if (isB) {
+            autoRunningB = false;
+        } else {
+            autoRunningC = false;
+        }
+        showIconWithTimeout("shake_off", 2000);
+        Serial.println(isB ? "Auto page B stopped" : "Auto page C stopped");
+        return;
+    }
+
+    // 开始执行：停掉另一路，保证同一时间只有一路在跑
+    autoRunningB = false;
+    autoRunningC = false;
+    if (isB) {
+        autoRunningB = true;
+        autoNextBTime = millis() + autoNextDelay();
+    } else {
+        autoRunningC = true;
+        autoNextCTime = millis() + autoNextDelay();
+    }
+
+    // 立即执行一次对应的按键操作
+    if (bleHid.isConnected()) {
+        updateActivity();
+        performAutoAction(isB);
+        if (config->pageDisplayEnable) {
+            if (config->autoTargetMode == MODE_CUSTOM) {
+                display.showPattern(isB ? ICON_LETTER_B : ICON_LETTER_C);
+                screenOffDeadline = millis() + 500;
+            } else {
+                showIconWithTimeout(autoActionIcon(isB), 500);
+            }
+        }
+    }
+
+    Serial.println(isB ? "Auto page B started" : "Auto page C started");
+}
+
 // 显示当前模式图标（KO模式下根据AP模式显示不同图标）
 void showCurrentModeIcon(uint32_t durationMs) {
     DeviceConfig* config = webConfig.getConfig();
     if (config->currentMode == MODE_KOREADER && webConfig.isKOModeAP()) {
         showIconWithTimeout("ko_ap", durationMs);
     } else {
-        const char* modeIcons[] = {"page", "arrow", "media", "music", "play", "koreader", "custom"};
+        const char* modeIcons[] = {"page", "arrow", "media", "music", "play", "koreader", "custom", "auto"};
         showIconWithTimeout(modeIcons[config->currentMode], durationMs);
     }
 }
@@ -291,12 +453,15 @@ void readAccelData(int16_t &x, int16_t &y, int16_t &z) {
 // 启用 WiFi（AP 热点 + STA 连接 + Web 服务器）
 void enableWiFi() {
     if (wifiAPEnabled) return;
-    
+
+    // WiFi 需要较高主频，升到 160MHz
+    setCpuFrequencyMhz(160);
+
     // 通过 WebConfig 启动 WiFi 和 Web 服务器
     webConfig.startWiFi();
     wifiAPEnabled = true;
     apNoClientTimer = millis();
-    
+
     Serial.println("WiFi enabled (AP + STA + Web server)");
 }
 
@@ -314,7 +479,16 @@ void disableWiFi() {
 // 启用蓝牙
 void enableBLE() {
     if (bleEnabled) return;
+
+    // 纯 BLE 模式主频降到 80MHz，可明显降低 CPU 功耗（BLE 控制器时序由硬件保证，不受主频影响）
+    setCpuFrequencyMhz(80);
+
     bleHid.begin("AlphaPi Turner");
+
+    // 应用配置的蓝牙发射功率（默认 -6dBm）和广播间隔档位（默认秒连）
+    bleHid.setTxPower(webConfig.getConfig()->bleTxPower);
+    bleHid.applyAdvInterval(webConfig.getConfig()->bleAdvMode);
+
     bleEnabled = true;
     Serial.println("BLE enabled");
 }
@@ -330,6 +504,9 @@ void disableBLE() {
 
 // 根据模式设置 WiFi 和蓝牙状态
 void applyModeWireless(uint8_t mode) {
+    // 切换模式时停止自动翻页
+    stopAutoPage();
+
     if (mode == MODE_KOREADER) {
         // koreader 模式：关闭蓝牙，打开 WiFi
         disableBLE();
@@ -384,11 +561,7 @@ void setup() {
     
     
     if (accelReady) {
-        // 设置摇晃参数（按照 Python 版逻辑）
-        accel.setShakeSens(3000);              // 摇晃阈值
-        accel.setShakeMinDurationMs(100);       // 最小摇晃时长
-        accel.setQuietDurationMs(300);          // 静止时长
-        accel.setShakeCooldownMs(1000);         // 冷却时间
+        // 摇晃参数在下方 loadConfigOnly() 之后统一从配置加载，这里不设置
     } else {
         // 初始化失败：显示叉号
         display.showIcon("shake_off");
@@ -423,18 +596,19 @@ void setup() {
     
     // 检查当前模式是否被关闭，如果是则切换到第一个启用的蓝牙模式
     if (config->currentMode != MODE_KOREADER) {
-        const uint8_t btModes[] = {MODE_PAGE, MODE_ARROW, MODE_MEDIA, MODE_MUSIC, MODE_PLAY, MODE_CUSTOM};
+        const uint8_t btModes[] = {MODE_PAGE, MODE_ARROW, MODE_MEDIA, MODE_MUSIC, MODE_PLAY, MODE_CUSTOM, MODE_AUTO};
         const bool modeEnabled[] = {
             config->modePageEnable,
             config->modeArrowEnable,
             config->modeMediaEnable,
             config->modeMusicEnable,
             config->modePlayEnable,
-            config->modeCustomEnable
+            config->modeCustomEnable,
+            config->modeAutoEnable
         };
         // 检查当前模式是否被关闭
         bool currentEnabled = false;
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < 7; i++) {
             if (btModes[i] == config->currentMode && modeEnabled[i]) {
                 currentEnabled = true;
                 break;
@@ -442,7 +616,7 @@ void setup() {
         }
         if (!currentEnabled) {
             // 当前模式被关闭了，找到第一个启用的蓝牙模式
-            for (int i = 0; i < 6; i++) {
+            for (int i = 0; i < 7; i++) {
                 if (modeEnabled[i]) {
                     config->currentMode = btModes[i];
                     break;
@@ -455,9 +629,13 @@ void setup() {
     applyModeWireless(config->currentMode);
     
     // 初始化上一个非 koreader 模式
+    // KO 模式下启动时保留 NVS 里持久化的值（Web 保存重启/深睡唤醒/断电后仍能正确返回）
     if (config->currentMode != MODE_KOREADER) {
-        lastNonKoreaderMode = config->currentMode;
+        config->lastNonKOMode = config->currentMode;
     }
+    
+    // 按摇晃开关决定加速度计电源状态（关闭摇晃时直接掉电，不再空跑 100Hz 采样）
+    applyAccelPowerState();
     
     // 显示当前模式图标 2 秒后自动熄灭
     showCurrentModeIcon(2000);
@@ -490,9 +668,15 @@ void loop() {
             
             if (gameMode) {
                 // 进入游戏模式：关闭蓝牙和 WiFi，初始化游戏
+                stopAutoPage();
                 disableBLE();
                 disableWiFi();
                 screenOffDeadline = 0;  // 屏幕常亮
+                
+                // 摇色子等游戏依赖加速度计，即使摇晃开关关闭也要恢复采样
+                if (accelReady) {
+                    accel.wakeUp();
+                }
                 
                 // 检查当前游戏是否被关闭，如果是则切换到第一个启用的游戏
                 DeviceConfig* config = webConfig.getConfig();
@@ -535,9 +719,21 @@ void loop() {
                 Serial.println("Entered game mode");
             } else {
                 // 退出游戏模式：恢复原来的模式
-                snakeGame.exit();
+                // 退出当前正在玩的游戏（复位状态并清屏），而不是固定调用 snakeGame.exit()
+                switch (currentGame) {
+                    case 0: snakeGame.exit(); break;
+                    case 1: catchGame.exit(); break;
+                    case 2: diceGame.exit(); break;
+                    case 3: stopwatchGame.exit(); break;
+                    case 4: gomokuGame.exit(); break;
+                    case 5: flappyGame.exit(); break;
+                    case 6: racingGame.exit(); break;
+                    case 7: tetrisGame.exit(); break;
+                }
                 DeviceConfig* config = webConfig.getConfig();
                 applyModeWireless(config->currentMode);
+                applyAccelPowerState();  // 退出游戏后按摇晃开关恢复电源状态
+                display.begin();  // 主频已恢复，重新初始化点阵通讯
                 showCurrentModeIcon(2000);
                 Serial.println("Exited game mode");
             }
@@ -682,6 +878,12 @@ void loop() {
         return;  // 游戏模式下不执行原来的处理
     }
     
+    // 摇晃开关与加速度计电源状态同步（Web 页保存配置后可能不一致）
+    // 放在游戏模式的 return 之后，避免把摇色子依赖的加速度计关掉
+    if (accelReady && (config->shakeEnable == accel.isPoweredDown())) {
+        applyAccelPowerState();
+    }
+    
     // 定期检查 BLE 连接状态（只有蓝牙启用时才检查）
     if (bleEnabled) {
         bleHid.isConnected();
@@ -732,7 +934,7 @@ void loop() {
         // 切换完成后再显示K图标（完全避免闪烁）
         showCurrentModeIcon(2000);
     }
-    if (screenOffDeadline > 0 && millis() >= screenOffDeadline) {
+    if (screenOffDeadline > 0 && (int32_t)(millis() - screenOffDeadline) >= 0) {
         display.clear();
         screenOffDeadline = 0;
     }
@@ -986,28 +1188,29 @@ void loop() {
                 if (config->currentMode == MODE_KOREADER) {
                     // 从 koreader 模式返回上一个非 koreader 模式
                     // 如果上一个模式被关闭了，找到第一个启用的蓝牙模式
-                    const uint8_t btModes[] = {MODE_PAGE, MODE_ARROW, MODE_MEDIA, MODE_MUSIC, MODE_PLAY, MODE_CUSTOM};
+                    const uint8_t btModes[] = {MODE_PAGE, MODE_ARROW, MODE_MEDIA, MODE_MUSIC, MODE_PLAY, MODE_CUSTOM, MODE_AUTO};
                     const bool modeEnabled[] = {
                         config->modePageEnable,
                         config->modeArrowEnable,
                         config->modeMediaEnable,
                         config->modeMusicEnable,
                         config->modePlayEnable,
-                        config->modeCustomEnable
+                        config->modeCustomEnable,
+                        config->modeAutoEnable
                     };
                     // 检查上一个模式是否被启用
                     bool lastEnabled = false;
-                    for (int i = 0; i < 6; i++) {
-                        if (btModes[i] == lastNonKoreaderMode && modeEnabled[i]) {
+                    for (int i = 0; i < 7; i++) {
+                        if (btModes[i] == config->lastNonKOMode && modeEnabled[i]) {
                             lastEnabled = true;
                             break;
                         }
                     }
                     if (lastEnabled) {
-                        config->currentMode = lastNonKoreaderMode;
+                        config->currentMode = config->lastNonKOMode;
                     } else {
                         // 找到第一个启用的蓝牙模式
-                        for (int i = 0; i < 6; i++) {
+                        for (int i = 0; i < 7; i++) {
                             if (modeEnabled[i]) {
                                 config->currentMode = btModes[i];
                                 break;
@@ -1015,8 +1218,8 @@ void loop() {
                         }
                     }
                 } else {
-                    // 保存当前模式，切换到 koreader 模式
-                    lastNonKoreaderMode = config->currentMode;
+                    // 保存当前模式（随 saveConfig 持久化到 NVS），切换到 koreader 模式
+                    config->lastNonKOMode = config->currentMode;
                     config->currentMode = MODE_KOREADER;
                     // 进入KO模式时默认STA模式（连接路由器）
                     webConfig.setKOModeAP(false);
@@ -1084,9 +1287,16 @@ void loop() {
             }
         }
         
-        // 短按B：下一页/下一曲/音量+（受方向对调影响）
+        // 短按B：下一页/下一曲/音量+（受方向对调影响）；Auto模式下启动/停止B键自动翻页
         if (buttons.B.pressed() && !abSuppressSingle) {
             updateActivity();
+
+            if (config->currentMode == MODE_AUTO) {
+                // Auto模式：B键启动/停止自动翻页（若C在执行则停C并立即执行B动作）
+                toggleAutoPage(true);
+                return;  // 跳过后续按键动作，避免越界访问keyActions
+            }
+
             // B 键默认是 next，如果方向对调则变为 prev
             bool isNext = !config->directionSwap;
             
@@ -1132,12 +1342,21 @@ void loop() {
             updateActivity();
             config->shakeEnable = !config->shakeEnable;
             webConfig.saveConfig();
+            // 关闭摇晃时让加速度计掉电，打开时恢复采样
+            applyAccelPowerState();
             showIconWithTimeout(config->shakeEnable ? "shake_on" : "shake_off", 2000);
         }
         
-        // 短按C：上一页/上一曲/音量-（受方向对调影响）
+        // 短按C：上一页/上一曲/音量-（受方向对调影响）；Auto模式下启动/停止C键自动翻页
         if (buttons.C.pressed()) {
             updateActivity();
+
+            if (config->currentMode == MODE_AUTO) {
+                // Auto模式：C键启动/停止自动翻页（若B在执行则停B并立即执行C动作）
+                toggleAutoPage(false);
+                return;  // 跳过后续按键动作，避免越界访问keyActions
+            }
+
             // C 键默认是 prev，如果方向对调则变为 next
             bool isNext = config->directionSwap;
             
@@ -1179,7 +1398,7 @@ void loop() {
         }
         
         // 长按C：对调翻页方向（play模式下不生效）
-        if (buttons.C.longPressed()) {
+        if (buttons.C.longPressed() && !abSuppressSingle) {
             updateActivity();
             if (config->currentMode != MODE_PLAY) {
                 config->directionSwap = !config->directionSwap;
@@ -1192,6 +1411,43 @@ void loop() {
             }
         }
         
+        // 自动翻页模式：定时执行所选模式的B/C键动作
+        if (config->currentMode == MODE_AUTO) {
+            uint32_t nowMs = millis();
+
+            if (autoRunningB && (int32_t)(nowMs - autoNextBTime) >= 0) {
+                autoNextBTime = nowMs + autoNextDelay();
+                if (bleHid.isConnected()) {
+                    updateActivity();  // 自动翻页期间保持设备不休眠
+                    performAutoAction(true);
+                    if (config->pageDisplayEnable) {
+                        if (config->autoTargetMode == MODE_CUSTOM) {
+                            display.showPattern(ICON_LETTER_B);
+                            screenOffDeadline = nowMs + 500;
+                        } else {
+                            showIconWithTimeout(autoActionIcon(true), 500);
+                        }
+                    }
+                }
+            }
+
+            if (autoRunningC && (int32_t)(nowMs - autoNextCTime) >= 0) {
+                autoNextCTime = nowMs + autoNextDelay();
+                if (bleHid.isConnected()) {
+                    updateActivity();
+                    performAutoAction(false);
+                    if (config->pageDisplayEnable) {
+                        if (config->autoTargetMode == MODE_CUSTOM) {
+                            display.showPattern(ICON_LETTER_C);
+                            screenOffDeadline = nowMs + 500;
+                        } else {
+                            showIconWithTimeout(autoActionIcon(false), 500);
+                        }
+                    }
+                }
+            }
+        }
+
         // 摇晃检测（和按键模式同步切换）
         if (config->shakeEnable && accel.checkShakeEvent()) {
             updateActivity();
@@ -1247,7 +1503,7 @@ void loop() {
             }
             
             // 翻页屏幕显示（所有模式都显示箭头）
-            if (config->pageDisplayEnable) {
+            if (config->currentMode != MODE_AUTO && config->pageDisplayEnable) {
                 const char* icon;
                 if (config->currentMode == MODE_KOREADER) {
                     // koreader 模式显示箭头
